@@ -52,7 +52,8 @@ Google Sheets darbojas kā **starpnieks (middleware)** starp Cal.com API un dash
 
 ## 2. Arhitektūras diagramma
 
-![Cal.com + Google Sheets + n8n Arhitektūra](calcom_architecture.png)
+<img width="2800" height="1800" alt="calcom_architecture" src="https://github.com/user-attachments/assets/ab536bd5-cfb1-455e-b6e4-22af9b66e609" />
+
 
 Diagramma parāda pilnu datu plūsmu: rezervāciju avoti (e-pasts, WhatsApp, manuāli) → n8n orķestrācija → Google Sheets starpnieks → Cal.com API v2 → Dashboard UI.
 
