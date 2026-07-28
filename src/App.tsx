@@ -32,7 +32,7 @@ const fallbackSpecialists = [
   },
   {
     therapist_id: 'ther_001',
-    therapist_name: 'Anna Kalniņa',
+    therapist_name: 'Anna Lindqvist',
     email: 'anna@norefjell.no',
     phone: '+4712345601',
     specialties: 'body,face',
@@ -224,7 +224,7 @@ const fallbackAppointments = [
     timeLabel: '10:30 - 11:00',
     client: 'Mark R.',
     procedure: 'Back and neck',
-    specialist: 'Anna Kalniņa',
+    specialist: 'Anna Lindqvist',
     room: 'Room 1',
     status: 'needs_action',
     price: '$95.00',
@@ -281,7 +281,7 @@ const realAppointments = [
     timeLabel: '09:00 - 10:00',
     client: 'Alice Cooper',
     procedure: 'Classic mountain massage (80m)',
-    specialist: 'Anna Kalniņa',
+    specialist: 'Anna Lindqvist',
     room: 'Room 1',
     status: 'confirmed',
     price: '$180.00',
@@ -359,6 +359,96 @@ const initialRequests = [
     requestedTime: '09:00 - 10:00',
     status: 'new',
     notes: 'First time at Norefjell Spa Resort.'
+  },
+  {
+    id: 'req_04',
+    client: 'Michael Chang',
+    avatar: null,
+    procedure: 'Classic facial (80m)',
+    requestedTime: '13:00 - 14:20',
+    status: 'new',
+    notes: 'Allergic to lavender.'
+  },
+  {
+    id: 'req_05',
+    client: 'Anna Svensson',
+    avatar: null,
+    procedure: 'Mountain stone massage',
+    requestedTime: '14:30 - 15:30',
+    status: 'new',
+    notes: 'Requesting strong pressure.'
+  },
+  {
+    id: 'req_06',
+    client: 'David O\'Connor',
+    avatar: null,
+    procedure: 'Hanakasumi™ signature',
+    requestedTime: '15:00 - 16:00',
+    status: 'new',
+    notes: 'Wants a quiet room.'
+  },
+  {
+    id: 'req_07',
+    client: 'Sofia Rossi',
+    avatar: null,
+    procedure: 'Norefjell dream',
+    requestedTime: '11:30 - 12:30',
+    status: 'new',
+    notes: 'Celebrating birthday.'
+  },
+  {
+    id: 'req_08',
+    client: 'Liam Neeson',
+    avatar: null,
+    procedure: 'Classic mountain massage (50m)',
+    requestedTime: '16:00 - 17:00',
+    status: 'new',
+    notes: 'Lower back focus.'
+  },
+  {
+    id: 'req_09',
+    client: 'Olivia Tremblay',
+    avatar: null,
+    procedure: 'Hanakasumi™ signature',
+    requestedTime: '09:00 - 10:00',
+    status: 'new',
+    notes: 'First time client.'
+  },
+  {
+    id: 'req_10',
+    client: 'James Smith',
+    avatar: null,
+    procedure: 'Norefjell dream',
+    requestedTime: '13:30 - 14:30',
+    status: 'new',
+    notes: 'No specific notes.'
+  },
+  {
+    id: 'req_11',
+    client: 'Emma Watson',
+    avatar: null,
+    procedure: 'Classic facial (80m)',
+    requestedTime: '10:30 - 11:50',
+    status: 'new',
+    notes: 'Requires extractions.'
+  },
+  {
+    id: 'req_12',
+    client: 'Lucas Silva',
+    avatar: null,
+    procedure: 'Mountain stone massage',
+    requestedTime: '17:00 - 18:00',
+    status: 'new',
+    notes: 'Prefers male therapist if possible.'
+  },
+  {
+    id: 'req_13',
+    client: 'Mia Wong',
+    avatar: null,
+    procedure: 'Norefjell dream',
+    requestedTime: '12:00 - 13:00',
+    status: 'new',
+    notes: 'Requires wheelchair access.'
   }
 ];
 
@@ -748,9 +838,9 @@ export default function App() {
 
   const [requests, setRequests] = useState<any[]>(() => {
     const id = localStorage.getItem('sb_spec_sheet_id') || '1EX8EBboc87ZMFfhSkEf27EA_EkQPDEMpiXgjSELWAZA';
-    const key = specSynced ? `sb_real_requests_list_${id}` : 'sb_offline_requests_list';
+    const key = specSynced ? `sb_real_requests_list_v3_${id}` : 'sb_offline_requests_list_v3';
     const list = localStorage.getItem(key);
-    return list ? JSON.parse(list) : (specSynced ? [] : initialRequests);
+    return list ? JSON.parse(list) : initialRequests;
   });
 
   const [actionRequests, setActionRequests] = useState<any[]>(() => {
@@ -827,7 +917,7 @@ export default function App() {
     prevSpecKey.current = keySpec;
 
     const keyAppt = specSynced ? `sb_real_appointments_list_${specialistSheetId}` : 'sb_offline_appointments_list';
-    const keyReq = specSynced ? `sb_real_requests_list_${specialistSheetId}` : 'sb_offline_requests_list';
+    const keyReq = specSynced ? `sb_real_requests_list_v3_${specialistSheetId}` : 'sb_offline_requests_list_v3';
     const keyAct = specSynced ? `sb_real_action_requests_${specialistSheetId}` : 'sb_offline_action_requests';
     const keyHand = specSynced ? `sb_real_handled_requests_${specialistSheetId}` : 'sb_offline_handled_requests';
 
@@ -843,12 +933,12 @@ export default function App() {
     setAppointments(savedAppt ? JSON.parse(savedAppt) : (specSynced ? realAppointments : fallbackAppointments));
 
     const savedReq = localStorage.getItem(keyReq);
-    setRequests(savedReq ? JSON.parse(savedReq) : (specSynced ? [] : initialRequests));
+    setRequests(savedReq ? JSON.parse(savedReq) : initialRequests);
 
     const savedAct = localStorage.getItem(keyAct);
-    setActionRequests(savedAct ? JSON.parse(savedAct) : (specSynced ? [] : [
+    setActionRequests(savedAct ? JSON.parse(savedAct) : [
       { id: 'act1', client: 'Sophie L.', avatar: null, procedure: 'Radiance Glow Facial', requestedTime: '09:30 - 10:15', status: 'needs_action', notes: 'Awaiting therapist assignment validation.' }
-    ]));
+    ]);
 
     const savedHand = localStorage.getItem(keyHand);
     setHandledRequests(savedHand ? JSON.parse(savedHand) : (specSynced ? [] : [
@@ -884,7 +974,7 @@ export default function App() {
   }, [appointments, specSynced, specialistSheetId]);
 
   useEffect(() => {
-    const keyReq = specSynced ? `sb_real_requests_list_${specialistSheetId}` : 'sb_offline_requests_list';
+    const keyReq = specSynced ? `sb_real_requests_list_v3_${specialistSheetId}` : 'sb_offline_requests_list_v3';
     localStorage.setItem(keyReq, JSON.stringify(requests));
   }, [requests, specSynced, specialistSheetId]);
 
@@ -950,6 +1040,8 @@ export default function App() {
   const [bookDate, setBookDate] = useState('2023-10-24');
   const [bookNotes, setBookNotes] = useState('');
   const [bookSelectedAddons, setBookSelectedAddons] = useState<string[]>([]);
+  const [bookSaveAsPending, setBookSaveAsPending] = useState(false);
+  const [reschedSaveAsPending, setReschedSaveAsPending] = useState(false);
 
   useEffect(() => {
     if (showBookingModal) {
@@ -964,10 +1056,23 @@ export default function App() {
   const [reschedTimeLabel, setReschedTimeLabel] = useState('09:00 - 10:00');
 
   const startReschedRequest = (req: any) => {
-    setRescheduleRequest(req);
-    setReschedSpecialist(specialists[0]?.therapist_name || 'Sophia Martinez');
-    setReschedTreatment(req.procedure);
-    setReschedTimeLabel(req.requestedTime);
+    const matchedTreat = treatments.find(t => t.name === req.procedure);
+    const duration = matchedTreat ? matchedTreat.duration : '30 min';
+    const mappedAppt = {
+      id: req.id,
+      title: req.procedure,
+      procedure: req.procedure,
+      client: req.client,
+      date: new Date().toISOString().split('T')[0],
+      start: new Date().toISOString(),
+      duration: duration,
+      room: 'Room 1',
+      notes: req.notes,
+      specialist: specialists[0]?.therapist_name || 'Anna Lindqvist',
+      status: 'rescheduling'
+    };
+    setSelectedAppointment(mappedAppt);
+    startRescheduleWorkflow(mappedAppt);
   };
 
 
@@ -1201,9 +1306,6 @@ export default function App() {
       });
       setSpecialists(realSpecialists);
       setAppointments(realAppointments);
-      setRequests([]);
-      setActionRequests([]);
-      setHandledRequests([]);
       triggerNotification(`Specialists Roster sheet tab "${name}" synced successfully.`);
     }, 1000);
   };
@@ -2006,7 +2108,17 @@ export default function App() {
           }
         });
         
-        setRequests(newRequests);
+        setRequests(prev => {
+          const offlineRequests = prev.filter(r => {
+             const idStr = r.id.toString();
+             return idStr.startsWith('req_') || idStr.startsWith('temp_') || idStr.startsWith('ra') || idStr.length >= 12;
+          });
+          const merged = [...newRequests];
+          offlineRequests.forEach(off => {
+             if (!merged.some(m => m.id === off.id)) merged.push(off);
+          });
+          return merged;
+        });
         setHandledRequests(newHandled);
         setAppointments(prev => {
           const merged = [...prev];
@@ -2082,9 +2194,6 @@ export default function App() {
       setSpecialistApiConnected(true);
       setSpecialists(realSpecialists);
       setAppointments(realAppointments);
-      setRequests([]);
-      setActionRequests([]);
-      setHandledRequests([]);
     }, 1200);
   };
 
@@ -2321,6 +2430,28 @@ export default function App() {
       posStyle: mapTimeToPos(timeLabel, duration, bookCleaningTime)
     };
 
+    if (bookSaveAsPending) {
+      const pendingReq = {
+        id: newAppt.id,
+        client: newAppt.client,
+        email: newAppt.email,
+        phone: newAppt.phone,
+        procedure: newAppt.procedure,
+        requestedTime: newAppt.timeLabel,
+        date: newAppt.date,
+        status: 'needs_action',
+        notes: newAppt.notes,
+        addons: newAppt.addons,
+        eventTypeId: matchedSpec?.mappedEventTypeId ? Number(matchedSpec.mappedEventTypeId) : undefined,
+        eventSlug: matchedSpec?.mappedEventSlug || ''
+      };
+      setRequests(prev => [pendingReq, ...prev]);
+      triggerMappedWebhook('request.created', pendingReq);
+      setShowBookingModal(false);
+      triggerNotification('Saved locally to Pending Requests.');
+      return;
+    }
+
     setAppointments(prev => [...prev, newAppt]);
     triggerMappedWebhook('booking.created', newAppt);
     setShowBookingModal(false);
@@ -2523,6 +2654,39 @@ export default function App() {
     const duration = selectedTreatment ? selectedTreatment.duration : selectedAppointment.duration;
     const procedureName = selectedTreatment ? selectedTreatment.name : selectedAppointment.procedure;
 
+    if (reschedSaveAsPending) {
+      setAppointments(prev => prev.filter(a => a.id !== selectedAppointment.id));
+      const pendingReq = {
+        id: selectedAppointment.id,
+        client: selectedAppointment.client,
+        email: selectedAppointment.email,
+        phone: selectedAppointment.phone,
+        procedure: procedureName,
+        requestedTime: selectedAppointment.timeLabel,
+        date: reschedDate,
+        status: 'needs_action',
+        notes: selectedAppointment.notes,
+        addons: selectedAppointment.addons,
+        eventTypeId: selectedAppointment.eventTypeId,
+        eventSlug: selectedAppointment.eventSlug
+      };
+      setRequests(prev => [pendingReq, ...prev]);
+      
+      if (calComApiKey && !selectedAppointment.isBreakBlock && !selectedAppointment.isCleaningBlock) {
+        const username = matchedSpec?.calUsername || (selectedAppointment.specialist === 'Admin' || selectedAppointment.specialist === 'admin' ? 'admin' : '');
+        import('./services/bookingService').then(({ bookingService }) => {
+          bookingService.cancelBooking(selectedAppointment.id, 'Moved to pending requests', username)
+          .catch(err => console.warn('Cancel failed:', err));
+        });
+      }
+      
+      setSelectedAppointment(null);
+      setIsRescheduling(false);
+      setReschedSaveAsPending(false);
+      triggerNotification('Appointment moved to Pending Requests and cancelled in API.');
+      return;
+    }
+
     // We now rely on dynamic calEventTypes checks when possible
     const specStatus = getSpecialistBookingStatus(selectedSpecialist, procedureName);
     if (!specStatus.valid) {
@@ -2605,7 +2769,7 @@ export default function App() {
               let eventTypeId = undefined;
               const lookupKey = matchedSpec?.calUserId || matchedSpec?.calUsername;
               const specEts = lookupKey ? (specialistEventTypes[lookupKey.toString()] || []) : [];
-              const exactEt = [...specEts].sort((a,b)=>b.title.length - a.title.length).find(et => (selectedAppointment.procedure).toLowerCase().includes(et.title.toLowerCase()));
+              const exactEt = [...specEts].sort((a,b)=>b.title.length - a.title.length).find(et => (procedureName).toLowerCase().includes(et.title.toLowerCase()));
               if (exactEt) {
                 eventTypeId = exactEt.id;
               } else if (selectedAppointment.eventTypeId) {
@@ -2621,10 +2785,10 @@ export default function App() {
                 notes: selectedAppointment.notes || 'Re-created booking due to missing reschedule target',
                 eventTypeId,
                 eventSlug: finalEventSlug,
-                durationMinutes: selectedAppointment.durationMinutes || parseInt(selectedAppointment.duration?.replace(' min', '') || '60'),
-                specialist: selectedAppointment.specialist,
+                durationMinutes: parseInt(duration?.replace(' min', '') || '60'),
+                specialist: selectedSpecialist,
                 username,
-                treatment: selectedAppointment.procedure
+                treatment: procedureName
               });
               
               setAppointments(prev => prev.map(a => a.id === selectedAppointment.id ? { ...a, id: newBooking.id } : a));
@@ -3142,7 +3306,7 @@ export default function App() {
               let eventTypeId = undefined;
               const lookupKey = matchedSpec?.calUserId || matchedSpec?.calUsername;
               const specEts = lookupKey ? (specialistEventTypes[lookupKey.toString()] || []) : [];
-              const exactEt = [...specEts].sort((a,b)=>b.title.length - a.title.length).find(et => (rescheduleRequest.procedure).toLowerCase().includes(et.title.toLowerCase()));
+              const exactEt = [...specEts].sort((a,b)=>b.title.length - a.title.length).find(et => (reschedTreatment || rescheduleRequest.procedure).toLowerCase().includes(et.title.toLowerCase()));
               if (exactEt) {
                 eventTypeId = exactEt.id;
               } else if (rescheduleRequest.eventTypeId) {
@@ -3158,10 +3322,10 @@ export default function App() {
                 notes: `Re-created booking for request: Provider ${reschedSpecialist} on ${reschedDate} in Room ${room}`,
                 eventTypeId,
                 eventSlug: finalEventSlug,
-                durationMinutes: rescheduleRequest.durationMinutes || parseInt(rescheduleRequest.duration?.replace(' min', '') || '60'),
+                durationMinutes: parseInt(duration?.replace(' min', '') || '60'),
                 specialist: reschedSpecialist,
                 username,
-                treatment: rescheduleRequest.procedure
+                treatment: reschedTreatment || rescheduleRequest.procedure
               });
               
               // Update local state references to the new ID if applicable
@@ -7530,56 +7694,101 @@ export default function App() {
                             />
                           </div>
 
-                          {/* Search Treatments Input */}
                           <div>
-                            <h5 className="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider mb-4">Available Treatments</h5>
-                            <div className="relative group">
-                              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/60 text-[20px]">search</span>
-                              <input 
-                                type="text" 
-                                value={searchTreatment}
-                                onChange={(e) => setSearchTreatment(e.target.value)}
-                                placeholder="Search treatments..." 
-                                className="w-full h-12 pl-10 pr-4 rounded-lg border border-surface-variant bg-surface-base text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" 
-                              />
-                            </div>
-                            
-                            <div className="space-y-2 mt-4 grid grid-cols-1 gap-2">
-                              {treatments.filter(t => t.name.toLowerCase().includes(searchTreatment.toLowerCase())).map(treatment => {
-                                const isMapped = true;
-                                if (!isMapped) {
-                                  return (
-                                    <div 
-                                      key={treatment.id}
-                                      className="p-4 rounded-lg border border-surface-variant/30 bg-surface-muted/50 flex flex-col gap-1 opacity-55 cursor-not-allowed"
-                                    >
-                                      <div className="flex justify-between items-start gap-2">
-                                        <span className="font-headline-md text-body-lg text-outline-variant font-semibold truncate">{treatment.name} (Not bookable - No event type mapped)</span>
-                                        <span className="text-outline-variant font-bold text-sm">{treatment.price}</span>
-                                      </div>
-                                      <p className="text-label-sm text-outline-variant">{treatment.duration} • {treatment.description}</p>
-                                    </div>
-                                  );
+                            <h5 className="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider mb-4">Treatment Procedure</h5>
+                            <select 
+                              required
+                              value={selectedTreatment?.name || ''}
+                              onChange={e => {
+                                const name = e.target.value;
+                                if (!name) {
+                                  setSelectedTreatment(null);
+                                  return;
                                 }
-                                return (
-                                  <div 
-                                    key={treatment.id}
-                                    onClick={() => setSelectedTreatment(treatment)}
-                                    className={`p-4 rounded-lg border flex flex-col gap-1 cursor-pointer transition-all clickable-hover-effect ${selectedTreatment?.name === treatment.name ? 'border-primary bg-primary/5 shadow-sm' : 'border-surface-variant bg-surface-base'}`}
-                                  >
-                                    <div className="flex justify-between items-start gap-2">
-                                      <span className="font-headline-md text-body-lg text-on-surface font-semibold truncate">{treatment.name}</span>
-                                      <div className="flex gap-2 shrink-0">
-                                        {treatment.bestseller && <span className="px-2 py-0.5 rounded bg-accent-coral/10 text-accent-coral font-label-sm text-[10px] uppercase">Bestseller</span>}
-                                        <span className="text-primary font-bold text-sm">{treatment.price}</span>
-                                      </div>
-                                    </div>
-                                    <p className="text-label-sm text-on-surface-variant">{treatment.duration} • {treatment.description}</p>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                                const selectedSpecObj = specialists.find(s => s.therapist_name === selectedSpecialist);
+                                const lookupKey = selectedSpecObj?.calUserId || selectedSpecObj?.calUsername;
+                                const specEts = lookupKey ? (specialistEventTypes[lookupKey.toString()] || []) : [];
+                                
+                                const selectedEt = specEts.find((x:any) => x.title === name);
+                                if (selectedEt) {
+                                  setSelectedTreatment({
+                                    id: selectedEt.id || name,
+                                    name: name,
+                                    duration: selectedEt.length ? `${selectedEt.length} min` : '30 min',
+                                    price: selectedEt.price ? `$${selectedEt.price}` : '—',
+                                    description: selectedEt.description || ''
+                                  });
+                                } else {
+                                  // Fallback logic
+                                  const t = treatments.find(t => t.name === name);
+                                  if (t) setSelectedTreatment(t);
+                                }
+                              }}
+                              className="w-full h-16 px-5 rounded-xl border border-surface-variant bg-surface-base text-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-semibold shadow-sm cursor-pointer"
+                            >
+                              <option value="">Select Treatment...</option>
+                              {(() => {
+                                if (!selectedSpecialist) return <option value="" disabled>Please select a specialist first</option>;
+                                const selectedSpecObj = specialists.find(s => s.therapist_name === selectedSpecialist);
+                                if (!selectedSpecObj) return null;
+
+                                const lookupKey = selectedSpecObj.calUserId || selectedSpecObj.calUsername;
+                                const specEts = lookupKey ? (specialistEventTypes[lookupKey.toString()] || []) : [];
+
+                                // De-duplicate by title
+                                const uniqueEts: any[] = [];
+                                const seenTitles = new Set();
+                                for (const et of specEts) {
+                                  if (!seenTitles.has(et.title)) {
+                                    seenTitles.add(et.title);
+                                    uniqueEts.push(et);
+                                  }
+                                }
+
+                                if (uniqueEts.length === 0) {
+                                  return <option value="" disabled>No treatments found for this specialist</option>;
+                                }
+
+                                return uniqueEts.map((et: any) => (
+                                  <option key={et.id} value={et.title}>{et.title}</option>
+                                ));
+                              })()}
+                            </select>
                           </div>
+
+                          {/* Conditional Duration Picker */}
+                          {(() => {
+                            if (!selectedTreatment || !selectedSpecialist) return null;
+                            const selectedSpecObj = specialists.find(s => s.therapist_name === selectedSpecialist);
+                            if (!selectedSpecObj) return null;
+                            const lookupKey = selectedSpecObj.calUserId || selectedSpecObj.calUsername;
+                            const specEts = lookupKey ? (specialistEventTypes[lookupKey.toString()] || []) : [];
+
+                            const selectedEt = specEts.find(et => et.title === selectedTreatment.name);
+
+                            // Only show if there are multiple duration options
+                            if (!selectedEt || !selectedEt.allowedDurations || selectedEt.allowedDurations.length <= 1) return null;
+
+                            return (
+                              <div className="mt-4">
+                                <h5 className="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider mb-4">Duration</h5>
+                                <select 
+                                  required
+                                  value={parseInt(selectedTreatment.duration) || ''}
+                                  onChange={e => {
+                                    const dur = e.target.value;
+                                    setSelectedTreatment((prev: any) => ({ ...prev, duration: `${dur} min` }));
+                                  }}
+                                  className="w-full h-16 px-5 rounded-xl border border-surface-variant bg-surface-base text-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-semibold shadow-sm cursor-pointer"
+                                >
+                                  <option value="">Select Duration...</option>
+                                  {selectedEt.allowedDurations.map((dur: number) => (
+                                    <option key={dur} value={dur}>{dur} minutes</option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          })()}
 
                         </div>
                       </div>
@@ -7624,22 +7833,32 @@ export default function App() {
                       </button>
                     )}
                   </div>
-                  
-                  {!isRescheduling ? (
-                    <button 
-                      onClick={handleSaveReschedule}
-                      className="h-12 px-6 sm:px-8 rounded-lg bg-strawberry-red text-on-primary font-label-md text-label-md hover:opacity-90 shadow-sm transition-all flex items-center justify-center gap-2 clickable-hover-effect cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">save</span>Save Changes
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={handleSaveReschedule}
-                      className="h-12 px-6 sm:px-8 rounded-lg bg-strawberry-red text-on-primary font-label-md text-label-md hover:opacity-90 shadow-sm transition-all flex items-center justify-center gap-2 clickable-hover-effect cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">save</span>Save Reschedule
-                    </button>
-                  )}
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-on-surface-variant font-medium">
+                      <input 
+                        type="checkbox" 
+                        checked={reschedSaveAsPending} 
+                        onChange={(e) => setReschedSaveAsPending(e.target.checked)} 
+                        className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary"
+                      />
+                      Move to Pending
+                    </label>
+                    {!isRescheduling ? (
+                      <button 
+                        onClick={handleSaveReschedule}
+                        className="h-12 px-6 sm:px-8 rounded-lg bg-strawberry-red text-on-primary font-label-md text-label-md hover:opacity-90 shadow-sm transition-all flex items-center justify-center gap-2 clickable-hover-effect cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">save</span>{reschedSaveAsPending ? 'Save Request' : 'Save Changes'}
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={handleSaveReschedule}
+                        className="h-12 px-6 sm:px-8 rounded-lg bg-strawberry-red text-on-primary font-label-md text-label-md hover:opacity-90 shadow-sm transition-all flex items-center justify-center gap-2 clickable-hover-effect cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">save</span>{reschedSaveAsPending ? 'Save Request' : 'Save Reschedule'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </>
             )}
@@ -8292,9 +8511,20 @@ export default function App() {
               </div>
             </div>
 
-            <div className="px-6 sm:px-8 py-4 border-t border-surface-variant bg-surface-container-lowest flex justify-end gap-3">
-              <button type="button" onClick={() => setShowBookingModal(false)} className="h-10 px-5 rounded-lg bg-surface-container-low text-on-surface-variant text-label-md font-semibold hover:bg-surface-container transition-colors clickable-hover-effect cursor-pointer">Cancel</button>
-              <button type="submit" className="h-10 px-8 rounded-lg bg-primary text-white text-label-md font-bold hover:opacity-90 shadow-sm transition-all clickable-hover-effect cursor-pointer">Book Appointment</button>
+            <div className="px-6 sm:px-8 py-4 border-t border-surface-variant bg-surface-container-lowest flex justify-between items-center gap-3">
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-on-surface-variant font-medium">
+                <input 
+                  type="checkbox" 
+                  checked={bookSaveAsPending} 
+                  onChange={(e) => setBookSaveAsPending(e.target.checked)} 
+                  className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary"
+                />
+                Save to Pending Requests
+              </label>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setShowBookingModal(false)} className="h-10 px-5 rounded-lg bg-surface-container-low text-on-surface-variant text-label-md font-semibold hover:bg-surface-container transition-colors clickable-hover-effect cursor-pointer">Cancel</button>
+                <button type="submit" className="h-10 px-8 rounded-lg bg-primary text-white text-label-md font-bold hover:opacity-90 shadow-sm transition-all clickable-hover-effect cursor-pointer">{bookSaveAsPending ? 'Save Request' : 'Book Appointment'}</button>
+              </div>
             </div>
           </form>
         </div>

@@ -117,9 +117,12 @@ export const bookingService = {
       v2Payload.eventTypeId = Number(bookingData.eventTypeId);
     } else if (bookingData.eventSlug) {
       v2Payload.eventTypeSlug = bookingData.eventSlug;
-      if (bookingData.username) {
-        v2Payload.username = bookingData.username;
-      }
+    }
+    
+    // ALWAYS pass username if provided, to ensure it routes to the correct specialist
+    // even if eventTypeId is missing or defaults.
+    if (bookingData.username) {
+      v2Payload.username = bookingData.username;
     }
 
     if (bookingData.durationMinutes) {
