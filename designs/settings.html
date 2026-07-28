@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en" class="light"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@500;600&amp;family=Manrope:wght@400;600;700&amp;display=swap" rel="stylesheet"><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=block" rel="stylesheet"><script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><meta charset="utf-8"><script id="tailwind-config">try{
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "error": "#ba1a1a",
+                        "secondary-fixed": "#f4dfcb",
+                        "surface-variant": "#e6e2df",
+                        "on-tertiary-container": "#f2ffff",
+                        "on-secondary-fixed-variant": "#524436",
+                        "on-secondary": "#ffffff",
+                        "sand-light": "#F2EBE3",
+                        "primary-container": "#3a7f7f",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-dim": "#ded9d6",
+                        "inverse-primary": "#8ed2d2",
+                        "on-error-container": "#93000a",
+                        "tertiary-fixed": "#cae8e9",
+                        "outline": "#6f7979",
+                        "on-error": "#ffffff",
+                        "inverse-on-surface": "#f5f0ed",
+                        "tertiary-container": "#5e7a7b",
+                        "surface-muted": "#F7F5F3",
+                        "primary-fixed": "#aaefee",
+                        "on-surface-variant": "#3f4948",
+                        "on-primary": "#ffffff",
+                        "on-secondary-fixed": "#241a0e",
+                        "surface-base": "#FFFFFF",
+                        "on-tertiary-fixed-variant": "#304b4c",
+                        "accent-coral": "#FC5E58",
+                        "primary": "#1b6666",
+                        "on-secondary-container": "#716252",
+                        "surface-container-low": "#f8f3f0",
+                        "secondary-fixed-dim": "#d7c3b0",
+                        "secondary": "#6b5c4c",
+                        "on-primary-container": "#f3fffe",
+                        "on-tertiary": "#ffffff",
+                        "background": "#fdf8f5",
+                        "surface-container-high": "#ece7e4",
+                        "on-primary-fixed": "#002020",
+                        "on-background": "#1c1b1a",
+                        "on-surface": "#1c1b1a",
+                        "surface-container": "#f2edea",
+                        "surface-bright": "#fdf8f5",
+                        "surface-container-highest": "#e6e2df",
+                        "surface": "#fdf8f5",
+                        "error-container": "#ffdad6",
+                        "tertiary-fixed-dim": "#aecccd",
+                        "tertiary": "#456162",
+                        "on-primary-fixed-variant": "#004f50",
+                        "secondary-container": "#f4dfcb",
+                        "surface-tint": "#1f6869",
+                        "inverse-surface": "#32302e",
+                        "on-tertiary-fixed": "#022021",
+                        "primary-fixed-dim": "#8ed2d2",
+                        "outline-variant": "#bec8c8"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "unit": "8px",
+                        "gutter": "24px",
+                        "container-max": "1440px",
+                        "margin-desktop": "40px",
+                        "margin-mobile": "16px"
+                    },
+                    "fontFamily": {
+                        "label-md": ["Hanken Grotesk"],
+                        "body-md": ["Manrope"],
+                        "label-sm": ["Hanken Grotesk"],
+                        "headline-xl": ["Manrope"],
+                        "headline-md": ["Manrope"],
+                        "headline-lg": ["Manrope"],
+                        "headline-xl-mobile": ["Manrope"],
+                        "body-lg": ["Manrope"]
+                    },
+                    "fontSize": {
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "label-sm": ["11px", { "lineHeight": "14px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "headline-xl": ["40px", { "lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "headline-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "headline-lg": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "headline-xl-mobile": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    }catch(_e){}</script></head><body class="text-on-surface antialiased flex bg-background">
+<!-- SideNavBar -->
+<aside class="h-full w-64 fixed left-0 top-0 bg-surface-container-low dark:bg-surface-container-lowest shadow-sm flex flex-col py-gutter px-4 z-50">
+
+<button class="mb-8 w-full bg-accent-coral text-white py-3 rounded-lg font-label-md text-label-md shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">Quick Book</button>
+<nav class="flex-1 space-y-2">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:bg-secondary-container/20 dark:hover:bg-secondary-container/10 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-body-md font-body-md">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:bg-secondary-container/20 dark:hover:bg-secondary-container/10 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">calendar_view_week</span>
+<span class="text-body-md font-body-md">Week View</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:bg-secondary-container/20 dark:hover:bg-secondary-container/10 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">calendar_view_month</span>
+<span class="text-body-md font-body-md">Month View</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:bg-secondary-container/20 dark:hover:bg-secondary-container/10 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">pending_actions</span>
+<span class="text-body-md font-body-md">Incoming Requests</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:bg-secondary-container/20 dark:hover:bg-secondary-container/10 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="text-body-md font-body-md">Clients</span>
+</a>
+</nav>
+<div class="mt-auto pt-4 border-t border-surface-variant space-y-2">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-primary dark:text-primary-fixed-dim font-bold border-r-4 border-primary dark:border-primary-fixed-dim bg-secondary-container/30 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: &quot;FILL&quot; 1;">settings</span>
+<span class="text-body-md font-body-md">Settings</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:bg-secondary-container/20 dark:hover:bg-secondary-container/10 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">help</span>
+<span class="text-body-md font-body-md">Support</span>
+</a>
+</div>
+<div class="mt-8 px-4 flex items-center gap-3 border-t border-surface-variant pt-6"><img alt="Spa Manager Avatar" class="w-10 h-10 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDuXVrNQ9c10_OUP1l-_JYuF7j95b9OyHlbBix5ZDRWv7_bbSBQCDxyVjEYOKMP6Lq6_HspXE8z_cc6Wk-57xglYOMLdKlOqpz0ImwtPUOoay8qyf_voRY1dQ6MnFB7PPk0ZO-VLHwWCEN4qYltnsdM6vRJ164fySsc5ulIlLKo6xAjVOWuRG3UNBbp6jtLpYYGbROk9mkklN1U2YHEb3vLQmh77K9J9bcT30zfKeCaq3oppVugLC9P"><div><img src="https://lh3.googleusercontent.com/aida/AP1WRLs-FTNAQaXn18s77kgQs9PJRKRnm2f7V_bMVTZoC_NZ_c4djxNsyNhbwpSyde7CwgHEPSFkcgtMQDMu2e6htvRm0hpwoY1MVBVCtejBDOkS619bJRQX2GYrksTscsNVOX5wO9i9uRP-l2VBB_mRo9Gro0U1jri6Tc5UAQGuwS1BdchTzK4gMYrs9n74aVb54PcAvLZAqFq1nBOuwGbNan21QXeR-uzy9dO2fbk6qTysl6ImJaFGB5nrDA" alt="Strawberry Hotels Logo" class="h-8 w-auto object-contain"><p class="text-label-sm font-label-sm text-on-surface-variant">Management Portal</p></div></div></aside>
+<!-- Main Content Area Wrapper -->
+<div class="flex-1 ml-64 flex flex-col min-h-screen">
+<!-- TopNavBar -->
+<header class="docked full-width top-0 sticky z-40 bg-surface dark:bg-surface-dim shadow-sm flex justify-between items-center w-full h-16 px-gutter">
+<div class="flex items-center gap-8">
+<!-- Navigation Links for TopNav context -->
+<nav class="hidden md:flex gap-6">
+<a class="text-on-surface-variant dark:text-surface-variant text-label-md font-label-md hover:text-primary dark:hover:text-primary-fixed-dim transition-all duration-200 py-1" href="#">Dashboard</a>
+<a class="text-on-surface-variant dark:text-surface-variant text-label-md font-label-md hover:text-primary dark:hover:text-primary-fixed-dim transition-all duration-200 py-1" href="#">Calendar</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="bg-accent-coral text-white px-4 py-2 rounded-lg text-label-md font-label-md shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">New Appointment</button>
+<button class="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
+<span class="material-symbols-outlined">help_outline</span>
+</button>
+<img alt="Manager Profile" class="w-8 h-8 rounded-full border border-surface-variant" data-alt="A small circular avatar of a spa manager, minimal, bright lighting, calm" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDw8lQv8zkmDHiUsG6fPOVDdd56VhY6-XIq5cTpf5T3h4FjA75MFfYwdSmKptfimQh4tRbDKTXtsbhG-c-0ROVCBeNESP6z_bQ862cYx9OVQeOMD0csoRApzG5sqMahw_FGfh9P7bpv62Jf6TCvDe4k5ZO3b6rphdBXa8eQxeBNwWcR-kI_s9MjLTHRHg0jiK0Kt1CXgj-0No8xGha9_2ShnYLJNeSGvreaB2Kj_dGRUmcIpbBRlYX8">
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-1 p-margin-desktop bg-surface-muted">
+<div class="max-w-4xl mx-auto space-y-8">
+<!-- Page Header -->
+<div>
+<h2 class="text-headline-xl font-headline-xl text-on-surface mb-2">Settings</h2>
+<p class="text-body-lg font-body-lg text-on-surface-variant">Manage your spa configurations, data sources, and integrations.</p>
+</div>
+<!-- Settings Section: Data Sources -->
+<section class="space-y-6">
+<div class="border-b border-outline-variant pb-2">
+<h3 class="text-headline-lg font-headline-lg text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">database</span>
+                            Data Sources
+                        </h3>
+<p class="text-body-md font-body-md text-on-surface-variant mt-1">Configure external data feeds for your management portal.</p>
+</div>
+<div class="grid grid-cols-1 gap-6">
+<!-- Specialist Roster Panel -->
+<div class="bg-surface-base rounded-xl ambient-shadow p-6 border border-surface-variant">
+<div class="mb-4">
+<h4 class="text-headline-md font-headline-md text-on-surface">Specialist Roster</h4>
+<p class="text-body-md font-body-md text-on-surface-variant mt-1">Manage the source for your specialist availability and scheduling.</p>
+</div>
+<div class="flex flex-col sm:flex-row gap-4 items-end mb-6">
+<div class="flex-1 w-full">
+<label class="block text-label-sm font-label-sm text-on-surface-variant mb-1 uppercase tracking-wider">Google Sheets ID</label>
+<input class="w-full bg-sand-light focus:bg-surface-base border border-transparent focus:border-primary rounded-lg px-4 py-3 text-body-md font-body-md text-on-surface outline-none transition-colors duration-200" type="text" value="1A2b3C4d5E6f7G8h9I0jK">
+</div>
+<button class="w-full sm:w-auto bg-accent-coral text-white px-6 py-3 rounded-lg text-label-md font-label-md font-bold shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center gap-2 min-w-[120px]"><span class="material-symbols-outlined text-[20px]">sync</span>Sync Now</button>
+</div>
+<div>
+<h5 class="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider mb-3">Recent Sheet IDs</h5>
+<ul class="space-y-2">
+<li class="flex items-center justify-between p-3 rounded-lg border border-surface-variant bg-surface-bright text-body-md font-body-md text-on-surface">
+<span class="font-mono text-sm text-on-surface-variant">1A2b3C4d5E6f7G8h9I0jK</span>
+<span class="text-label-sm font-label-sm text-primary bg-tertiary-fixed px-2 py-1 rounded">Active</span>
+</li>
+<li class="flex items-center justify-between p-3 rounded-lg border border-transparent hover:bg-surface-container-low text-body-md font-body-md text-on-surface cursor-pointer transition-colors">
+<span class="font-mono text-sm text-outline">xYz987aBc654dEf321</span>
+<span class="text-label-sm font-label-sm text-on-surface-variant">3 days ago</span>
+</li>
+</ul>
+</div>
+</div>
+<!-- Treatment List Panel -->
+<div class="bg-surface-base rounded-xl ambient-shadow p-6 border border-surface-variant">
+<div class="mb-4">
+<h4 class="text-headline-md font-headline-md text-on-surface">Treatment List</h4>
+<p class="text-body-md font-body-md text-on-surface-variant mt-1">Manage the source for your offered services, durations, and pricing.</p>
+</div>
+<div class="flex flex-col sm:flex-row gap-4 items-end mb-6">
+<div class="flex-1 w-full">
+<label class="block text-label-sm font-label-sm text-on-surface-variant mb-1 uppercase tracking-wider">Google Sheets ID</label>
+<input class="w-full bg-sand-light focus:bg-surface-base border border-transparent focus:border-primary rounded-lg px-4 py-3 text-body-md font-body-md text-on-surface outline-none transition-colors duration-200" placeholder="Enter Sheet ID..." type="text">
+</div>
+<button class="w-full sm:w-auto bg-accent-coral text-white px-6 py-3 rounded-lg text-label-md font-label-md font-bold shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center gap-2 min-w-[120px]"><span class="material-symbols-outlined text-[20px]">sync</span>Sync Now</button>
+</div>
+<div>
+<h5 class="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider mb-3">Recent Sheet IDs</h5>
+<div class="p-4 rounded-lg border border-dashed border-outline-variant bg-surface-muted text-center text-body-md font-body-md text-on-surface-variant">
+                                    No recent sheets synced for treatments.
+                                </div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+</div>
+
+
+
+
+
+</body></html>

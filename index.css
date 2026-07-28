@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme {
+  --color-inverse-on-surface: #f5f0ed;
+  --color-surface-container: #f2edea;
+  --color-on-error: #ffffff;
+  --color-on-primary-fixed-variant: #004f50;
+  --color-background: #fdf8f5;
+  --color-primary-container: #3a7f7f;
+  --color-tertiary-fixed: #cae8e9;
+  --color-on-tertiary-container: #f2ffff;
+  --color-tertiary-fixed-dim: #aecccd;
+  --color-sand-light: #F2EBE3;
+  --color-secondary-container: #f4dfcb;
+  --color-surface: #fdf8f5;
+  --color-on-secondary-fixed-variant: #524436;
+  --color-surface-bright: #fdf8f5;
+  --color-inverse-primary: #8ed2d2;
+  --color-error: #ba1a1a;
+  --color-on-secondary-fixed: #241a0e;
+  --color-on-surface-variant: #3f4948;
+  --color-tertiary: #456162;
+  --color-on-secondary: #ffffff;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-base: #FFFFFF;
+  --color-surface-container-high: #ece7e4;
+  --color-secondary-fixed: #f4dfcb;
+  --color-on-tertiary-fixed: #022021;
+  --color-secondary: #6b5c4c;
+  --color-outline: #6f7979;
+  --color-primary-fixed-dim: #8ed2d2;
+  --color-primary: #1b6666;
+  --color-surface-variant: #e6e2df;
+  --color-surface-dim: #ded9d6;
+  --color-on-primary-container: #f3fffe;
+  --color-on-tertiary-fixed-variant: #304b4c;
+  --color-surface-tint: #1f6869;
+  --color-on-background: #1c1b1a;
+  --color-on-error-container: #93000a;
+  --color-primary-fixed: #aaefee;
+  --color-surface-container-low: #f8f3f0;
+  --color-on-secondary-container: #716252;
+  --color-surface-container-highest: #e6e2df;
+  --color-on-primary: #ffffff;
+  --color-accent-coral: #FC5E58;
+  --color-on-tertiary: #ffffff;
+  --color-outline-variant: #bec8c8;
+  --color-secondary-fixed-dim: #d7c3b0;
+  --color-tertiary-container: #5e7a7b;
+  --color-error-container: #ffdad6;
+  --color-on-surface: #1c1b1a;
+  --color-on-primary-fixed: #002020;
+  --color-inverse-surface: #32302e;
+  --color-surface-muted: #F7F5F3;
+
+  --radius-DEFAULT: 0.25rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-full: 9999px;
+
+  --spacing-margin-mobile: 16px;
+  --spacing-gutter: 24px;
+  --spacing-margin-desktop: 40px;
+  --spacing-unit: 8px;
+  --spacing-container-max: 1440px;
+
+  --font-headline-lg: "Manrope";
+  --font-body-md: "Manrope";
+  --font-headline-xl: "Manrope";
+  --font-headline-xl-mobile: "Manrope";
+  --font-headline-md: "Manrope";
+  --font-body-lg: "Manrope";
+  --font-label-md: "Hanken Grotesk";
+  --font-label-sm: "Hanken Grotesk";
+  --font-sans: "Manrope", sans-serif;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-on-background);
+  font-family: var(--font-sans);
+}
