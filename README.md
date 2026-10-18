@@ -23,9 +23,12 @@ By leveraging Google Sheets as a database and n8n as a webhook/email courier, CA
 ## 🤖 The MCP AI Assistant / Spa Receptionist
 CAL.DIY features a built-in MCP (Model Context Protocol) AI Agent that operates entirely within the dashboard's ecosystem. It acts as both a **Spa Receptionist** (talking to clients) and a **Spa Manager** (executing system commands).
 
-### How It Is Powered
-* **Backend:** A Node.js/Express proxy server (`server/server.js`) that safely interfaces with the Cal.com V2 API, bypassing CORS and enforcing proper authentication headers per-specialist.
-* **LLM Orchestration:** Powered by Vercel AI SDK and OpenAI (e.g., GPT-4o). The AI receives a strict System Prompt defining its persona, constraints, and JSON-based tool-calling syntax.
+* **LLM Orchestration:** Powered by Vercel AI SDK and OpenAI (`gpt-6-luna`). The model is used consistently across:
+  * **Web Guest Chat (`POST /api/chat`, `role = 'guest'`):** Floating client AI on `www.calcom.run.place`.
+  * **Chat Administration & Staff Console (`POST /api/chat`, `role = 'admin'` / `'receptionist'`):** Receptionist & Manager assistant on `spa.calcom.run.place`.
+  * **Agent Workflow & Email Engine (`POST /api/email`, `POST /api/email/update`):** Autonomous email parsing, slot suggestions, and phone number extraction.
+* **API Administration:** This model (`gpt-6-luna`) is administered through [platform.openai.com](https://platform.openai.com). It authenticates via the `OPENAI_API_KEY` environment variable in `server/.env`.
+* **API Key Management:** Configured via the backend `.env` environment file (`OPENAI_API_KEY`).
 * **Queue System:** The GUI continuously polls the `Requests` Google Sheet. Pending rows are autonomously fed into the AI's context window for evaluation.
 
 ### Autonomous Email Processing (The Closed Loop via n8n)

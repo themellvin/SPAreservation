@@ -502,6 +502,81 @@ export default function App() {
   const [incomingTab, setIncomingTab] = useState<'new' | 'action' | 'handled'>('new');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Cal.com OAuth 2.0 & 2FA State (Hard-locked to server verification)
+  const [oauthSessionId, setOauthSessionId] = useState<string>(() => {
+    return localStorage.getItem('sb_cal_oauth_session_id') || '';
+  });
+  const [oauthUser, setOauthUser] = useState<any>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string>('');
+
+  // Check URL params for OAuth callback session or verify existing session
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sid = params.get('session_id') || localStorage.getItem('sb_cal_oauth_session_id');
+    const authStatus = params.get('auth');
+    const userParam = params.get('user');
+
+    if (authStatus === 'success' && sid) {
+      localStorage.setItem('sb_cal_oauth_session_id', sid);
+      setOauthSessionId(sid);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    if (!sid) {
+      setIsCheckingAuth(false);
+      setOauthUser(null);
+      return;
+    }
+
+    // Always cryptographically verify session with the server gateway (/api/auth/me)
+    const verifyServerSession = async () => {
+      try {
+        const res = await fetch(`/api/auth/me?session_id=${encodeURIComponent(sid)}`);
+        const data = await res.json();
+        if (data && data.authenticated && data.user) {
+          setOauthSessionId(sid);
+          setOauthUser(data.user);
+          if (data.role === 'admin') {
+            setCurrentUserRole('admin');
+            setAdminModeAuthenticated(true);
+          }
+        } else {
+          localStorage.removeItem('sb_cal_oauth_session_id');
+          localStorage.removeItem('sb_cal_oauth_user');
+          setOauthSessionId('');
+          setOauthUser(null);
+        }
+      } catch (e: any) {
+        console.warn('Session verification error:', e);
+        localStorage.removeItem('sb_cal_oauth_session_id');
+        localStorage.removeItem('sb_cal_oauth_user');
+        setOauthSessionId('');
+        setOauthUser(null);
+      } finally {
+        setIsCheckingAuth(false);
+      }
+    };
+
+    verifyServerSession();
+  }, []);
+
+  const handleOAuthLogin = () => {
+    window.location.href = '/api/auth/login';
+  };
+
+  const handleOAuthLogout = async () => {
+    try {
+      if (oauthSessionId) {
+        await fetch(`/api/auth/logout?session_id=${encodeURIComponent(oauthSessionId)}`, { method: 'POST' });
+      }
+    } catch {}
+    localStorage.removeItem('sb_cal_oauth_session_id');
+    localStorage.removeItem('sb_cal_oauth_user');
+    setOauthSessionId('');
+    setOauthUser(null);
+  };
+
   // Specialist Sync Configs (Persisted)
   const [specialistSourceMode, setSpecialistSourceMode] = useState<'sheets' | 'api'>(() => {
     return (localStorage.getItem('sb_spec_source_mode') as 'sheets' | 'api') || 'sheets';
@@ -1153,10 +1228,32 @@ export default function App() {
   const [editingClient, setEditingClient] = useState<any | null>(null);
   const [editingTreatment, setEditingTreatment] = useState<any | null>(null);
 
-  const [mcpMessages, setMcpMessages] = useState<any[]>([{ id: '1', role: 'assistant', content: 'Hello! I can check availability and book appointments for your specialists. Just ask!' }]);
+  const [mcpMessages, setMcpMessages] = useState<any[]>(() => {
+    try {
+      const saved = sessionStorage.getItem('serena_touch_staff_chat_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (_) {}
+    return [{ id: '1', role: 'assistant', content: 'Hello! I am your Serene Touch SPA AI Receptionist. I can check specialist availability and book appointments. How may I assist you today?' }];
+  });
   const [mcpInput, setMcpInput] = useState('');
   const [mcpLoading, setMcpLoading] = useState(false);
+  const [previousNonMcpView, setPreviousNonMcpView] = useState<string>('dashboard');
   const handleMcpInputChange = (e: any) => setMcpInput(e.target.value);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('serena_touch_staff_chat_v1', JSON.stringify(mcpMessages));
+    } catch (_) {}
+  }, [mcpMessages]);
+
+  useEffect(() => {
+    if (currentView !== 'mcp') {
+      setPreviousNonMcpView(currentView);
+    }
+  }, [currentView]);
 
 
   // Drag over states
@@ -1396,7 +1493,7 @@ export default function App() {
       }
       // Build /users endpoint from base
       // Fetch through our local proxy to avoid CORS issues when fetching users
-      const usersEndpoint = 'http://localhost:3001/api/proxy/users';
+      const usersEndpoint = '/api/proxy/users';
       
       const resp = await fetch(usersEndpoint, {
         headers: { 
@@ -1533,7 +1630,7 @@ export default function App() {
     setMcpLoading(true);
 
     try {
-      const res = await fetch('http://localhost:3001/api/chat', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -1835,7 +1932,7 @@ export default function App() {
       return newBooking;
     } catch (err: any) {
       console.error('Cal.com create booking error:', err);
-      triggerNotification(`Cal.com API Notice: Saved locally, but Cal.diy POST failed (${err.message || err})`);
+      triggerNotification(`Reservation API Notice: Saved locally, but Reservation Engine POST failed (${err.message || err})`);
       throw err;
     }
   };
@@ -1950,18 +2047,29 @@ export default function App() {
 
         bookingsList.forEach((booking: any) => {
           const id = booking.uid || booking.id.toString();
-          const client = booking.attendees?.[0]?.name || booking.responses?.name || 'Unknown Client';
-          const email = booking.attendees?.[0]?.email || '';
+          let client = booking.attendees?.[0]?.name || booking.responses?.name || 'Unknown Client';
+          let email = booking.attendees?.[0]?.email || '';
           
           const bfr = booking.bookingFieldsResponses || {};
           const resp = booking.responses || {};
           
-          const phone = booking.attendees?.[0]?.phoneNumber || 
+          let phone = booking.attendees?.[0]?.phoneNumber || 
                         (typeof bfr.phone === 'object' ? bfr.phone?.value : bfr.phone) ||
                         (typeof bfr.attendeePhoneNumber === 'object' ? bfr.attendeePhoneNumber?.value : bfr.attendeePhoneNumber) ||
                         (typeof resp.phone === 'object' ? resp.phone?.value : resp.phone) ||
                         (typeof resp.attendeePhoneNumber === 'object' ? resp.attendeePhoneNumber?.value : resp.attendeePhoneNumber) ||
                         '';
+                        
+          const existingAppt = appointments.find(a => a.id === id);
+          if (client === 'Unknown Client' && existingAppt && existingAppt.client) {
+            client = existingAppt.client;
+          }
+          if (!email && existingAppt && existingAppt.email) {
+            email = existingAppt.email;
+          }
+          if (!phone && existingAppt && existingAppt.phone) {
+            phone = existingAppt.phone;
+          }
           
 
           // Build a composite notes string to capture standard notes, reschedule reasons, and any custom questions
@@ -2761,7 +2869,7 @@ export default function App() {
             notes: selectedAppointment.notes || 'Rescheduled via form'
           }, username)
           .then(() => {
-            triggerNotification('Reschedule successfully updated in Cal.diy API.');
+            triggerNotification('Reschedule successfully updated in Reservation Engine.');
           })
           .catch(async (err) => {
             console.warn('Reschedule failed, trying fallback createBooking:', err);
@@ -2785,17 +2893,17 @@ export default function App() {
                 notes: selectedAppointment.notes || 'Re-created booking due to missing reschedule target',
                 eventTypeId,
                 eventSlug: finalEventSlug,
-                durationMinutes: parseInt(duration?.replace(' min', '') || '60'),
+                durationMinutes: (exactEt?.duration) || parseInt(duration?.replace(' min', '') || '60'),
                 specialist: selectedSpecialist,
                 username,
                 treatment: procedureName
               });
               
               setAppointments(prev => prev.map(a => a.id === selectedAppointment.id ? { ...a, id: newBooking.id } : a));
-              triggerNotification(`Cal.diy Notice: Target booking did not exist. Created a new booking as fallback (ID: ${newBooking.id}).`);
+              triggerNotification(`Reservation Engine: Target booking did not exist. Created a new booking as fallback (ID: ${newBooking.id}).`);
             } catch (createErr: any) {
               console.error('Fallback creation failed:', createErr);
-              triggerNotification(`Cal.com API Notice: Saved locally, but Cal.diy reschedule failed & fallback creation failed (${createErr.message || createErr}).`);
+              triggerNotification(`Reservation API Notice: Saved locally, but reschedule failed & fallback creation failed (${createErr.message || createErr}).`);
             }
           });
         });
@@ -2942,10 +3050,12 @@ export default function App() {
               console.log('DRAG_AND_DROP_DEBUG:', { targetUsername, lookupKey, specEtsLength: specEts.length, apptProcedure: appt.procedure, exactEt: exactEt?.id });
               if (exactEt) {
                 eventTypeId = exactEt.id;
+              } else if (specEts.length > 0) {
+                eventTypeId = specEts[0].id;
               } else if (appt.eventTypeId) {
                 eventTypeId = appt.eventTypeId; 
               }
-              const finalEventSlug = exactEt?.slug || targetSpec?.mappedEventSlug || appt.eventSlug || '';
+              const finalEventSlug = exactEt?.slug || (specEts.length > 0 ? specEts[0].slug : '') || targetSpec?.mappedEventSlug || appt.eventSlug || '';
 
               const newBooking = await bookingService.createBooking({
                 start: startIso,
@@ -2955,7 +3065,7 @@ export default function App() {
                 notes: appt.notes || 'Transferred booking via Drag & Drop',
                 eventTypeId,
                 eventSlug: finalEventSlug,
-                durationMinutes: appt.durationMinutes || parseInt(appt.duration?.replace(' min', '') || '60'),
+                durationMinutes: (exactEt?.duration) || appt.durationMinutes || parseInt(appt.duration?.replace(' min', '') || '60'),
                 specialist: targetSpecialistName,
                 username: targetUsername,
                 treatment: appt.procedure
@@ -2968,15 +3078,22 @@ export default function App() {
               } catch (e) {
                 console.warn('Could not cancel old booking after transfer:', e);
               }
-              triggerNotification(`Transferred booking to ${targetSpecialistName} in Cal.diy API (New ID: ${newBooking.id}).`);
+              triggerNotification(`Transferred booking to ${targetSpecialistName} in Reservation Engine (New ID: ${newBooking.id}).`);
             } else {
               // Same specialist, just reschedule
               try {
-                await bookingService.rescheduleBooking(appt.id, {
+                const reschedRes = await bookingService.rescheduleBooking(appt.id, {
                   start: startIso,
-                  notes: appt.notes || 'Rescheduled via Drag & Drop'
+                  notes: appt.notes || 'Rescheduled via Drag & Drop',
+                  name: appt.client,
+                  email: appt.email
                 }, oldUsername);
-                triggerNotification('Reschedule successfully updated in Cal.diy API.');
+                
+                const newId = reschedRes?.data?.uid || reschedRes?.uid || reschedRes?.data?.id || reschedRes?.id;
+                if (newId && newId !== appt.id) {
+                  setAppointments(prev => prev.map(a => a.id === appt.id ? { ...a, id: newId.toString() } : a));
+                }
+                triggerNotification('Reschedule successfully updated in Reservation Engine.');
               } catch (err: any) {
                 console.warn('Reschedule failed, trying fallback createBooking:', err);
                 let eventTypeId = undefined;
@@ -2998,7 +3115,7 @@ export default function App() {
                   notes: appt.notes || 'Re-created booking due to missing reschedule target',
                   eventTypeId,
                   eventSlug: finalEventSlug,
-                  durationMinutes: appt.durationMinutes || parseInt(appt.duration?.replace(' min', '') || '60'),
+                  durationMinutes: (exactEt?.duration) || appt.durationMinutes || parseInt(appt.duration?.replace(' min', '') || '60'),
                   specialist: appt.specialist,
                   username: oldUsername,
                   treatment: appt.procedure
@@ -3012,14 +3129,14 @@ export default function App() {
                   console.warn('Could not cancel old booking after fallback creation:', e);
                 }
                 
-                triggerNotification(`Cal.diy Notice: Target booking did not exist. Created a new booking as fallback (ID: ${newBooking.id}).`);
+                triggerNotification(`Reservation Engine: Target booking did not exist. Created a new booking as fallback (ID: ${newBooking.id}).`);
               }
             }
           };
           
           doTransfer().catch(err => {
             console.error('Drag/Drop API operation failed:', err);
-            triggerNotification(`Cal.diy Notice: Saved locally, but API operation failed (${err.message || 'unknown error'}).`);
+            triggerNotification(`Reservation Engine: Saved locally, but API operation failed (${err.message || err || 'unknown error'}).`);
           });
         });
       }
@@ -3144,8 +3261,8 @@ export default function App() {
           triggerNotification('Booking successfully scheduled.');
         })
         .catch(err => {
-          console.error('Cal.com booking post failed:', err);
-          triggerNotification(`Cal.com API Notice: Approved locally, but Cal.diy POST failed (${err.message || err}).`);
+          console.error('Reservation booking post failed:', err);
+          triggerNotification(`Reservation API Notice: Approved locally, but Reservation Engine POST failed (${err.message || err}).`);
         });
       });
     }
@@ -3298,7 +3415,7 @@ export default function App() {
             notes: `Rescheduled request: Provider ${reschedSpecialist} on ${reschedDate} in Room ${room}`
           }, username)
           .then(() => {
-            triggerNotification('Reschedule successfully updated in Cal.diy API.');
+            triggerNotification('Reschedule successfully updated in Reservation Engine.');
           })
           .catch(async (err) => {
             console.warn('Reschedule failed, trying fallback createBooking:', err);
@@ -3330,10 +3447,10 @@ export default function App() {
               
               // Update local state references to the new ID if applicable
               setHandledRequests(prev => prev.map(r => r.id === rescheduleRequest.id ? { ...r, id: newBooking.id } : r));
-              triggerNotification(`Cal.diy Notice: Target booking did not exist. Created a new booking as fallback (ID: ${newBooking.id}).`);
+              triggerNotification(`Reservation Engine: Target booking did not exist. Created a new booking as fallback (ID: ${newBooking.id}).`);
             } catch (createErr: any) {
               console.error('Fallback creation failed:', createErr);
-              triggerNotification(`Cal.com API Notice: Saved locally, but Cal.diy reschedule failed & fallback creation failed (${createErr.message || createErr}).`);
+              triggerNotification(`Reservation API Notice: Saved locally, but reschedule failed & fallback creation failed (${createErr.message || createErr}).`);
             }
           });
         });
@@ -3377,10 +3494,10 @@ export default function App() {
         const username = matchedSpec?.calUsername || (appt?.specialist === 'Admin' || appt?.specialist === 'admin' ? 'admin' : '');
 
         await bookingService.cancelBooking(cancelingApptId, cancelReason, username);
-        triggerNotification('Booking cancelled successfully on Cal.diy API.');
+        triggerNotification('Booking cancelled successfully in Reservation Engine.');
       } catch (err: any) {
-        console.error('Cal.com cancellation failed:', err);
-        triggerNotification(`Cal.diy API Notice: Cancelled locally, but Cal.diy rejected cancellation. Tip: Ensure "Disable Cancelling" is disabled in Cal.diy Event Type Advanced settings.`);
+        console.error('Reservation cancellation failed:', err);
+        triggerNotification(`Reservation Engine Notice: Cancelled locally, but engine rejected cancellation.`);
       }
     } else {
       triggerNotification('Booking cancelled locally.');
@@ -3662,7 +3779,7 @@ export default function App() {
           }));
 
           if (aggregatedSlots.length === 0) {
-            setAvailabilityError(`No available slots returned from Cal.diy for "${data.title}" on ${availabilityDate}. The specialist may be fully booked or the schedule is not configured.`);
+            setAvailabilityError(`No available slots returned from Reservation Engine for "${data.title}" on ${availabilityDate}. The specialist may be fully booked or the schedule is not configured.`);
             setAvailabilitySlots([]);
           } else {
             setAvailabilitySlots(aggregatedSlots);
@@ -3695,7 +3812,7 @@ export default function App() {
       const coUsername = matchedCoSpec ? (matchedCoSpec.calUsername || '') : '';
 
       if (!slugOrId) {
-        setAvailabilityError('Primary specialist has no mapped Event Type ID or Slug. Configured mapping is required for Cal.diy API queries. Showing mock data.');
+        setAvailabilityError('Primary specialist has no mapped Event Type ID or Slug. Configured mapping is required for Reservation Engine queries. Showing mock data.');
         setAvailabilitySlots([
           { time: `${availabilityDate}T09:00:00.000Z`, specialistName: matchedSpec.therapist_name },
           { time: `${availabilityDate}T09:30:00.000Z`, specialistName: matchedSpec.therapist_name },
@@ -3718,7 +3835,7 @@ export default function App() {
           finalSlots = finalSlots.filter((s: any) => times2.has(s.time));
           
           if (finalSlots.length === 0) {
-            setAvailabilityError('No overlapping slots returned from Cal.diy API for the selected date. Showing mock fallback.');
+            setAvailabilityError('No overlapping slots returned from Reservation Engine for the selected date. Showing mock fallback.');
             finalSlots = [
               { time: `${availabilityDate}T09:00:00.000Z`, specialistName: `${matchedSpec.therapist_name} & ${matchedCoSpec.therapist_name}` },
               { time: `${availabilityDate}T10:00:00.000Z`, specialistName: `${matchedSpec.therapist_name} & ${matchedCoSpec.therapist_name}` }
@@ -3727,7 +3844,7 @@ export default function App() {
         }
       } else {
         if (slots1.length === 0) {
-          setAvailabilityError('No available slots returned from Cal.diy API for the selected date. Showing mock fallback.');
+          setAvailabilityError('No available slots returned from Reservation Engine for the selected date. Showing mock fallback.');
           finalSlots = [
             { time: `${availabilityDate}T09:00:00.000Z`, specialistName: matchedSpec.therapist_name },
             { time: `${availabilityDate}T10:00:00.000Z`, specialistName: matchedSpec.therapist_name }
@@ -4113,6 +4230,59 @@ export default function App() {
     return matchSearch && matchStatus && matchTeam && matchRole && matchSpecialty;
   });
 
+  // 1. Loading screen while verifying active session
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-cover bg-center flex flex-col items-center justify-center p-6 relative" style={{ backgroundImage: "url('/spa-bg.jpg')" }}>
+        <div className="absolute inset-0 bg-[#0f1c16]/80 backdrop-blur-md"></div>
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="w-16 h-16 rounded-full border-4 border-[#d8b875]/20 border-t-[#d8b875] animate-spin mb-4"></div>
+          {/* [BRAND: SERENA_TOUCH] */}
+          <p className="text-[#f7f4ee] font-semibold text-sm tracking-wide">Verifying SERENA <span className="text-[#d8b875]">TOUCH</span> Session &amp; 2FA Credentials…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Bank-level OAuth 2.0 + 2FA Gate: block unauthenticated visitors
+  /* [BRAND: SERENA_TOUCH] Login & 2FA Gate */
+  if (!oauthSessionId || !oauthUser) {
+    return (
+      <div className="min-h-screen bg-cover bg-center flex items-center justify-center p-4 relative" style={{ backgroundImage: "url('/spa-bg.jpg')" }}>
+        <div className="absolute inset-0 bg-[#0f1c16]/65 backdrop-blur-sm"></div>
+        <div className="max-w-md w-full bg-[#14271f]/75 border border-[#d8b875]/45 rounded-3xl shadow-[0_25px_70px_rgba(0,0,0,0.65)] p-8 sm:p-10 text-center relative z-10 animate-fade-in backdrop-blur-xl text-[#f7f4ee]">
+          <div className="w-20 h-20 mx-auto mb-5 rounded-2xl overflow-hidden shadow-lg border border-[#d8b875]/50 bg-[#14271f] flex items-center justify-center">
+            <img src="/S_icon.svg" alt="SERENA TOUCH" className="w-full h-full object-contain" />
+          </div>
+          <span className="text-[11px] font-bold tracking-[0.25em] text-[#d8b875] uppercase block mb-2">Luxury Wellness &amp; Management</span>
+          {/* [BRAND: SERENA_TOUCH] Matches www.calcom.run.place navbar font & gold TOUCH */}
+          <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-[0.16em] mb-2 uppercase" style={{ fontFamily: '"DM Sans", "Manrope", sans-serif' }}>
+            SERENA <span className="text-[#d8b875]">TOUCH</span>
+          </h2>
+          <p className="text-xs text-[#f7f4ee]/80 mb-6 leading-relaxed">
+            Reception &amp; Management Console. Protected by enterprise-grade <strong className="text-[#d8b875]">Two-Factor Authentication (2FA)</strong>.
+          </p>
+
+          <div className="bg-[#0f1c16]/55 border border-[#d8b875]/35 rounded-2xl p-4 mb-6 text-left flex items-start gap-3 shadow-inner backdrop-blur-md">
+            <span className="material-symbols-outlined text-[#d8b875] text-xl mt-0.5">verified_user</span>
+            <div className="text-xs text-[#f7f4ee]/90 leading-normal">
+              <strong className="block font-semibold text-[#d8b875] mb-1">Defense-in-Depth Identity and Access Management.</strong>
+              Staff sign in with individual, verified accounts and complete multi-factor authentication using an authenticator app. Access permissions are role-based, and destructive or administrative actions require additional step-up verification.
+            </div>
+          </div>
+
+          <button
+            onClick={handleOAuthLogin}
+            className="w-full spa-btn-gold font-bold py-3.5 px-6 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer clickable-hover-effect"
+          >
+            <span className="material-symbols-outlined text-xl">login</span>
+            <span>Log in to SERENA TOUCH (2FA)</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-background text-on-surface font-body-md min-h-screen flex relative">
       
@@ -4130,60 +4300,78 @@ export default function App() {
       {/* Sidebar Overlay */}
       <div 
         onClick={() => setSidebarOpen(false)}
-        className={`fixed inset-0 bg-on-surface/40 backdrop-blur-sm z-50 transition-opacity md:hidden ${sidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+        className={`fixed inset-0 bg-black/40 backdrop-blur-xs z-40 transition-opacity ${sidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
       ></div>
 
-      {/* SideNavBar */}
-      {/* SideNavBar Wrapper / Trigger Zone on Desktop */}
-      <div className={`fixed left-0 top-0 bottom-0 z-50 transition-all duration-300 pointer-events-none ${sidebarOpen ? 'w-full' : 'w-0 md:w-6'} group`}>
-        <div className="absolute left-0 top-0 bottom-0 w-6 pointer-events-auto hidden md:block"></div>
-        <nav className={`h-full w-64 fixed left-0 top-0 bg-surface-container-low/95 backdrop-blur-md shadow-[5px_0_30px_rgba(0,0,0,0.3)] flex flex-col py-8 px-4 border-r border-surface-variant/30 transition-all duration-300 md:-translate-x-full group-hover:translate-x-0 pointer-events-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-          <div className="flex justify-between items-center mb-6 md:mb-8 pl-2">
-            <span className="text-headline-md font-bold text-primary tracking-wide">Strawberry Spa</span>
-            <button onClick={() => setSidebarOpen(false)} className="md:hidden text-on-surface-variant p-2 hover:bg-surface-container rounded-full ml-2 cursor-pointer">
+      {/* SideNavBar - Transparent Emerald Glass with Golden Corner & Wider Button Spacing */}
+      <div className={`fixed inset-y-0 left-0 z-50 transition-all duration-300 ${sidebarOpen ? 'w-72' : 'w-0 pointer-events-none'}`}>
+        <nav 
+          className={`h-full w-72 backdrop-blur-xl shadow-[8px_0_40px_rgba(0,0,0,0.6),0_0_25px_rgba(216,184,117,0.22)] flex flex-col py-8 px-5 border-r-2 border-t-2 border-b-2 border-[#d8b875]/75 rounded-r-[32px] transition-transform duration-300 pointer-events-auto relative overflow-hidden text-[#f7f4ee] ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+          style={{
+            backgroundImage: "linear-gradient(155deg, rgba(20, 39, 31, 0.72) 0%, rgba(15, 28, 22, 0.80) 100%), url('/spa-bg.jpg')",
+            backgroundSize: 'cover',
+            backgroundPosition: 'center'
+          }}
+        >
+          {/* Decorative Golden Corner Accents */}
+          <span className="pointer-events-none absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-[#d8b875] rounded-tr-[30px] shadow-[0_0_15px_rgba(216,184,117,0.5)]"></span>
+          <span className="pointer-events-none absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-[#d8b875] rounded-br-[30px] shadow-[0_0_15px_rgba(216,184,117,0.5)]"></span>
+
+          <div className="flex justify-between items-center mb-8 pl-1 border-b border-[#d8b875]/30 pb-5">
+            <div className="flex items-center gap-3">
+              <img src="/S_icon.svg" alt="SERENA TOUCH" className="w-9 h-9 rounded-xl border border-[#d8b875]/60 shadow-md" />
+              <div className="flex flex-col">
+                {/* [BRAND: SERENA_TOUCH] */}
+                <span className="text-base font-bold text-white tracking-[0.14em] uppercase" style={{ fontFamily: '"DM Sans", "Manrope", sans-serif' }}>
+                  SERENA <span className="text-[#d8b875]">TOUCH</span>
+                </span>
+                <span className="text-[10px] uppercase font-bold text-[#d8b875]/90 tracking-[0.2em]">Spa Management</span>
+              </div>
+            </div>
+            <button onClick={() => setSidebarOpen(false)} className="text-[#f7f4ee]/85 hover:text-[#d8b875] p-2 hover:bg-white/10 border border-[#d8b875]/35 rounded-full ml-1 cursor-pointer transition-all" title="Close Menu">
               <span className="material-symbols-outlined">close</span>
             </button>
           </div>
 
-          <div className="flex-1 space-y-2">
+          <div className="flex-1 space-y-4 overflow-y-auto pr-1">
             <button 
               onClick={() => { 
                 setCurrentView('dashboard'); 
                 setSidebarOpen(false); 
                 setDashboardDate(new Date().toISOString().split('T')[0]); 
               }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left clickable-hover-effect ${currentView === 'dashboard' ? 'text-primary font-bold border-r-4 border-primary bg-secondary-container/30' : 'text-on-surface-variant hover:text-primary hover:bg-secondary-container/20'}`}
+              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left clickable-hover-effect transition-all ${currentView === 'dashboard' ? 'text-[#14271f] font-bold bg-gradient-to-r from-[#d8b875] to-[#c9a863] border border-[#d8b875] shadow-[0_4px_15px_rgba(216,184,117,0.35)]' : 'text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875] hover:bg-[#14271f]/65'}`}
             >
               <span className="material-symbols-outlined">dashboard</span>
-              <span className="text-label-md font-label-md">Dashboard</span>
+              <span className="text-[15px] font-semibold">Dashboard</span>
             </button>
             <button 
               onClick={() => { setCurrentView('week'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left clickable-hover-effect ${currentView === 'week' ? 'text-primary font-bold border-r-4 border-primary bg-secondary-container/30' : 'text-on-surface-variant hover:text-primary hover:bg-secondary-container/20'}`}
+              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left clickable-hover-effect transition-all ${currentView === 'week' ? 'text-[#14271f] font-bold bg-gradient-to-r from-[#d8b875] to-[#c9a863] border border-[#d8b875] shadow-[0_4px_15px_rgba(216,184,117,0.35)]' : 'text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875] hover:bg-[#14271f]/65'}`}
             >
               <span className="material-symbols-outlined">calendar_view_week</span>
-              <span className="text-label-md font-label-md">Week View</span>
+              <span className="text-[15px] font-semibold">Week View</span>
             </button>
             <button 
               onClick={() => { setCurrentView('month'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left clickable-hover-effect ${currentView === 'month' ? 'text-primary font-bold border-r-4 border-primary bg-secondary-container/30' : 'text-on-surface-variant hover:text-primary hover:bg-secondary-container/20'}`}
+              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left clickable-hover-effect transition-all ${currentView === 'month' ? 'text-[#14271f] font-bold bg-gradient-to-r from-[#d8b875] to-[#c9a863] border border-[#d8b875] shadow-[0_4px_15px_rgba(216,184,117,0.35)]' : 'text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875] hover:bg-[#14271f]/65'}`}
             >
               <span className="material-symbols-outlined">calendar_view_month</span>
-              <span className="text-label-md font-label-md">Month View</span>
+              <span className="text-[15px] font-semibold">Month View</span>
             </button>
             <button 
               onClick={() => { setCurrentView('bookings'); setSidebarOpen(false); handleSyncAllCalCom(); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left clickable-hover-effect ${currentView === 'bookings' ? 'text-primary font-bold border-r-4 border-primary bg-secondary-container/30' : 'text-on-surface-variant hover:text-primary hover:bg-secondary-container/20'}`}
+              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left clickable-hover-effect transition-all ${currentView === 'bookings' ? 'text-[#14271f] font-bold bg-gradient-to-r from-[#d8b875] to-[#c9a863] border border-[#d8b875] shadow-[0_4px_15px_rgba(216,184,117,0.35)]' : 'text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875] hover:bg-[#14271f]/65'}`}
             >
               <span className="material-symbols-outlined">book_online</span>
-              <span className="text-label-md font-label-md">Bookings Registry</span>
+              <span className="text-[15px] font-semibold">Bookings Registry</span>
             </button>
             <button 
               onClick={() => { setCurrentView('requests'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left clickable-hover-effect ${currentView === 'requests' ? 'text-primary font-bold border-r-4 border-primary bg-secondary-container/30' : 'text-on-surface-variant hover:text-primary hover:bg-secondary-container/20'}`}
+              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left clickable-hover-effect transition-all ${currentView === 'requests' ? 'text-[#14271f] font-bold bg-gradient-to-r from-[#d8b875] to-[#c9a863] border border-[#d8b875] shadow-[0_4px_15px_rgba(216,184,117,0.35)]' : 'text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875] hover:bg-[#14271f]/65'}`}
             >
               <span className="material-symbols-outlined">pending_actions</span>
-              <span className="text-label-md font-label-md">Pending Approvals</span>
+              <span className="text-[15px] font-semibold">Pending Approvals</span>
             </button>
 
             <button 
@@ -4192,13 +4380,24 @@ export default function App() {
                 setSettingsTab('specialists_manager');
                 setSidebarOpen(false); 
               }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left clickable-hover-effect ${currentView === 'settings' && settingsTab === 'specialists_manager' ? 'text-primary font-bold border-r-4 border-primary bg-secondary-container/30' : 'text-on-surface-variant hover:text-primary hover:bg-secondary-container/20'}`}
+              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left clickable-hover-effect transition-all ${currentView === 'settings' && settingsTab === 'specialists_manager' ? 'text-[#14271f] font-bold bg-gradient-to-r from-[#d8b875] to-[#c9a863] border border-[#d8b875] shadow-[0_4px_15px_rgba(216,184,117,0.35)]' : 'text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875] hover:bg-[#14271f]/65'}`}
             >
-              <span className="material-symbols-outlined text-primary">admin_panel_settings</span>
-              <span className="text-label-md font-label-md font-bold">Specialist Manager</span>
+              <span className="material-symbols-outlined text-[#d8b875]">admin_panel_settings</span>
+              <span className="text-[15px] font-bold">Specialist Manager</span>
+            </button>
+
+            <button 
+              onClick={() => { 
+                setCurrentView('mcp');
+                setSidebarOpen(false); 
+              }}
+              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left clickable-hover-effect transition-all ${currentView === 'mcp' ? 'text-[#14271f] font-bold bg-gradient-to-r from-[#d8b875] to-[#c9a863] border border-[#d8b875] shadow-[0_4px_15px_rgba(216,184,117,0.35)]' : 'text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875] hover:bg-[#14271f]/65'}`}
+            >
+              <img src="/S_icon.svg" className="w-5 h-5 rounded object-contain" alt="" />
+              <span className="text-[15px] font-bold">SPA AI Console</span>
             </button>
           </div>
-          <div className="mt-auto space-y-2 pt-4 border-t border-surface-variant">
+          <div className="mt-auto space-y-3.5 pt-5 border-t border-[#d8b875]/30">
             {/* Role Toggle */}
             <button 
               onClick={() => {
@@ -4210,23 +4409,23 @@ export default function App() {
                   setSidebarOpen(false);
                 }
               }}
-              className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg text-left clickable-hover-effect text-on-surface-variant hover:text-primary hover:bg-secondary-container/20`}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl text-left clickable-hover-effect text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875] transition-all"
             >
               <div className="flex items-center gap-3">
-                <span className="material-symbols-outlined">{currentUserRole === 'admin' ? 'admin_panel_settings' : 'face'}</span>
-                <span className="text-label-md font-label-md">{currentUserRole === 'admin' ? 'Admin Mode' : 'Receptionist'}</span>
+                <span className="material-symbols-outlined text-[#d8b875]">{currentUserRole === 'admin' ? 'admin_panel_settings' : 'face'}</span>
+                <span className="text-[15px] font-semibold">{currentUserRole === 'admin' ? 'Admin Mode' : 'Receptionist'}</span>
               </div>
-              <div className={`w-8 h-4 rounded-full relative transition-colors ${currentUserRole === 'admin' ? 'bg-primary' : 'bg-surface-variant'}`}>
-                <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${currentUserRole === 'admin' ? 'left-4.5' : 'left-0.5'}`}></div>
+              <div className={`w-9 h-5 rounded-full relative transition-colors border border-[#d8b875]/50 ${currentUserRole === 'admin' ? 'bg-[#d8b875]' : 'bg-[#0f1c16]'}`}>
+                <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full transition-all ${currentUserRole === 'admin' ? 'left-4.5 bg-[#14271f]' : 'left-0.5 bg-[#d8b875]'}`}></div>
               </div>
             </button>
 
             <button 
               onClick={() => { setCurrentView('support'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left clickable-hover-effect ${currentView === 'support' ? 'text-primary font-bold border-r-4 border-primary bg-secondary-container/30' : 'text-on-surface-variant hover:text-primary hover:bg-secondary-container/20'}`}
+              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left clickable-hover-effect transition-all ${currentView === 'support' ? 'text-[#14271f] font-bold bg-gradient-to-r from-[#d8b875] to-[#c9a863] border border-[#d8b875]' : 'text-[#f7f4ee] bg-[#14271f]/45 border border-[#d8b875]/25 hover:border-[#d8b875]/65 hover:text-[#d8b875]'}`}
             >
               <span className="material-symbols-outlined">help</span>
-              <span className="text-label-md font-label-md">Support</span>
+              <span className="text-[15px] font-semibold">Support</span>
             </button>
           </div>
         </nav>
@@ -4238,8 +4437,12 @@ export default function App() {
         {/* TopNavBar */}
         <header className="docked top-0 sticky z-40 bg-surface shadow-sm h-16 px-6 flex justify-between items-center max-w-full">
           <div className="flex items-center gap-2">
-            <button onClick={() => setSidebarOpen(true)} className="md:hidden text-on-surface-variant p-2 hover:bg-surface-container rounded-full mr-2">
-              <span className="material-symbols-outlined">menu</span>
+            <button 
+              onClick={() => setSidebarOpen(prev => !prev)} 
+              className="text-on-surface-variant p-2 hover:bg-surface-container rounded-lg mr-1 cursor-pointer flex items-center justify-center transition-colors"
+              title="Toggle Menu"
+            >
+              <span className="material-symbols-outlined text-2xl">menu</span>
             </button>
             <div className="relative w-64 hidden lg:block">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
@@ -4286,7 +4489,7 @@ export default function App() {
               <button
                 onClick={handleSyncAllCalCom}
                 disabled={isGlobalSyncing}
-                title="Sync from Cal.com"
+                title="Sync Schedule"
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer clickable-hover-effect disabled:opacity-60 hidden sm:flex bg-surface-muted/50 text-on-surface-variant border border-surface-variant hover:bg-surface-hover hover:text-primary shadow-sm`}
               >
                 <span className={`material-symbols-outlined text-[16px] ${isGlobalSyncing ? 'animate-spin text-primary' : ''}`}>sync</span>
@@ -4308,7 +4511,27 @@ export default function App() {
             >
               <span className="material-symbols-outlined">help_outline</span>
             </button>
-            <button onClick={() => setShowBookingModal(true)} className="bg-accent-coral text-on-primary font-label-md text-label-md py-2 px-4 rounded-lg shadow-sm hover:bg-accent-coral/90 transition-all h-10 flex items-center hidden sm:flex clickable-hover-effect cursor-pointer">New Appointment</button>
+            <button onClick={() => setShowBookingModal(true)} className="spa-btn-gold font-label-md text-label-md py-2 px-5 rounded-lg shadow-sm transition-all h-10 flex items-center hidden sm:flex clickable-hover-effect cursor-pointer">New Appointment</button>
+
+            {/* [BRAND: SERENA_TOUCH] Authenticated User Badge & Logout */}
+            {oauthUser && (
+              <div className="flex items-center gap-2 pl-2 border-l border-surface-variant/40">
+                <div className="hidden xl:flex flex-col text-right">
+                  <span className="text-xs font-bold text-on-surface leading-tight">{oauthUser.name || oauthUser.email || 'Receptionist'}</span>
+                  <span className="text-[10px] text-primary flex items-center justify-end gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 2FA Verified
+                  </span>
+                </div>
+                <button
+                  onClick={handleOAuthLogout}
+                  title="Log out of SERENA TOUCH session"
+                  className="p-2 rounded-lg text-on-surface-variant hover:text-accent-coral hover:bg-surface-container transition-colors cursor-pointer flex items-center gap-1 text-xs font-semibold"
+                >
+                  <span className="material-symbols-outlined text-[18px]">logout</span>
+                  <span className="hidden lg:inline">Sign Out</span>
+                </button>
+              </div>
+            )}
 
             {/* Notification Dropdown panel */}
             {showNotifications && (
@@ -4337,7 +4560,7 @@ export default function App() {
 
         {/* Dashboard View */}
         {currentView === 'dashboard' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
+          <main className="flex-1 p-4 sm:p-8 spa-view-picture-bg overflow-y-auto">
             
             <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4 mb-8">
               <div>
@@ -4765,7 +4988,7 @@ export default function App() {
 
         {/* Incoming Requests View */}
         {currentView === 'requests' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
+          <main className="flex-1 p-4 sm:p-8 spa-view-picture-bg overflow-y-auto">
             <div className="mb-8 flex justify-between items-end">
               <div>
                 <h2 className="text-headline-xl font-headline-xl text-on-surface mb-2">Incoming Requests</h2>
@@ -4778,7 +5001,7 @@ export default function App() {
                   className="bg-primary text-white h-10 px-4 rounded-lg text-label-sm font-bold hover:opacity-90 flex items-center justify-center gap-2 shadow-sm"
                 >
                   <span className={`material-symbols-outlined text-[18px] ${isSyncingCalCom ? 'animate-spin' : ''}`}>sync</span>
-                  {isSyncingCalCom ? 'Syncing...' : 'Sync Cal.com'}
+                  {isSyncingCalCom ? 'Syncing...' : 'Sync Schedule'}
                 </button>
                 <div className="text-label-md font-label-md text-on-surface-variant bg-surface-container-high px-3 py-1.5 rounded-lg">
                   {filteredRequests.length} Pending
@@ -4983,7 +5206,7 @@ export default function App() {
 
         {/* Settings View */}
         {currentView === 'settings' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
+          <main className="flex-1 p-4 sm:p-8 spa-view-picture-bg overflow-y-auto">
             <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
               <div>
                 <h2 className="text-headline-xl font-headline-xl text-on-surface mb-2">Settings</h2>
@@ -5061,7 +5284,7 @@ export default function App() {
                         <tbody className="divide-y divide-surface-variant/30">
                           {filteredSpecs.length === 0 ? (
                             <tr>
-                              <td colSpan={5} className="p-8 text-center text-on-surface-variant/50 italic">No Cal.diy specialists matched search/filters.</td>
+                              <td colSpan={5} className="p-8 text-center text-on-surface-variant/50 italic">No specialists matched search/filters.</td>
                             </tr>
                           ) : (
                             filteredSpecs.map(usr => {
@@ -5963,7 +6186,7 @@ export default function App() {
                               />
                             </div>
                             <div>
-                              <label className="block text-[10px] font-bold uppercase text-on-surface-variant mb-1">Cal.diy Username</label>
+                              <label className="block text-[10px] font-bold uppercase text-on-surface-variant mb-1">Specialist Username</label>
                               <input 
                                 required
                                 type="text"
@@ -6461,11 +6684,11 @@ export default function App() {
                   <div className="mb-6">
                     <h2 className="text-headline-xl font-headline-xl text-on-surface mb-1 font-headline uppercase tracking-wider flex items-center gap-2">
                       <span className="material-symbols-outlined text-primary text-3xl" style={{ fontVariationSettings: '"FILL" 1' }}>admin_panel_settings</span>
-                      CAL.DIY MANAGER
+                      RESERVATION ENGINE MANAGER
                     </h2>
                     <p className="text-body-lg text-on-surface-variant">Enterprise control center — users, specialists, treatments, calendars &amp; webhooks.</p>
                   </div>
-                  {/* Render the Cal.com Booking Integration panel inline */}
+                  {/* Render the Booking Integration panel inline */}
                   {(() => {
                     const renderCalComBookingIntegration = () => (
                       <></>
@@ -6476,13 +6699,13 @@ export default function App() {
                         <div className="p-8 text-center">
                           <span className="material-symbols-outlined text-[64px] text-primary mb-4 block" style={{ fontVariationSettings: '"FILL" 1' }}>settings</span>
                           <h3 className="text-headline-md font-bold mb-2">Open in Settings</h3>
-                          <p className="text-body-md text-on-surface-variant mb-4 max-w-md mx-auto">The full CAL.DIY MANAGER control center is accessible in Settings → Cal.com Integration tab. Click below to navigate directly.</p>
+                          <p className="text-body-md text-on-surface-variant mb-4 max-w-md mx-auto">The full RESERVATION ENGINE MANAGER control center is accessible in Settings → Calendar Integration tab. Click below to navigate directly.</p>
                           <button
                             onClick={() => { setCurrentView('settings'); setSettingsTab('specialists_manager'); }}
                             className="bg-primary text-white px-8 py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-all shadow-md inline-flex items-center gap-2"
                           >
                             <span className="material-symbols-outlined">open_in_new</span>
-                            Open CAL.DIY MANAGER
+                            Open RESERVATION ENGINE MANAGER
                           </button>
                         </div>
                       </div>
@@ -6496,115 +6719,167 @@ export default function App() {
           return renderCalDiyManager();
         })()}
 
-        {/* Cal.com AI (MCP) View */}
+        {/* [BRAND: SERENA_TOUCH] SERENE TOUCH SPA AI Console View */}
         {currentView === 'mcp' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
-            <div className="max-w-4xl mx-auto space-y-6 animate-fade-in flex flex-col h-[calc(100vh-120px)] text-on-surface">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-headline-xl font-headline-xl text-on-surface mb-2 font-headline uppercase tracking-wider flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-3xl">smart_toy</span>
-                    {currentUserRole === 'receptionist' ? 'SPA AI Receptionist' : 'Cal.com AI Companion Agent'} (MCP Console)
-                  </h2>
-                  <p className="text-body-lg font-body-lg text-on-surface-variant">Interactively query, schedule, reschedule, cancel, and manage event types using natural language commands.</p>
+          <main 
+            className="flex-1 p-4 sm:p-8 overflow-y-auto relative text-[#f7f4ee]"
+            style={{
+              backgroundImage: 'linear-gradient(135deg, rgba(20, 39, 31, 0.58) 0%, rgba(15, 28, 22, 0.70) 100%), url(/spa-bg.jpg)',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundAttachment: 'fixed'
+            }}
+          >
+            <div className="max-w-4xl mx-auto space-y-6 animate-fade-in flex flex-col h-[calc(100vh-120px)]">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-[#14271f]/45 backdrop-blur-md p-6 rounded-2xl border border-[#d8b875]/45 shadow-xl">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-[#14271f]/85 border border-[#d8b875]/60 flex items-center justify-center shadow-lg p-1.5 shrink-0">
+                    <img src="/S_icon.svg" alt="S" className="w-9 h-9 object-contain" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      {/* [BRAND: SERENA_TOUCH] */}
+                      <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-wide">
+                        SERENA <span className="text-[#d8b875]">TOUCH</span> SPA AI
+                      </h2>
+                      <span className="text-[11px] bg-[#d8b875]/20 border border-[#d8b875]/55 text-[#d8b875] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                        AI Receptionist
+                      </span>
+                    </div>
+                    <p className="text-sm text-[#f7f4ee]/90 font-medium mt-0.5">
+                      Autonomous Reception &amp; Scheduling Console
+                    </p>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setMcpMessages([{ id: '1', role: 'assistant', content: 'Hello! I can check availability and book appointments for your specialists. Just ask!' }])}
-                  title="Clear Chat History"
-                  className="p-2.5 text-on-surface-variant hover:text-error hover:bg-error/10 rounded-xl transition-colors flex items-center gap-2 border border-surface-variant/30 hover:border-error/20"
-                >
-                  <span className="material-symbols-outlined text-xl">delete</span>
-                  <span className="text-sm font-medium hidden sm:inline">Clear History</span>
-                </button>
+                <div className="flex items-center gap-3 self-start sm:self-auto">
+                  <button
+                    onClick={() => {
+                      const resetMsg = [{ id: '1', role: 'assistant', content: 'Hello! Welcome to Serene Touch. How can I assist you today? Feel free to ask about our treatments, check open time slots, or book an appointment.' }];
+                      setMcpMessages(resetMsg);
+                      try { sessionStorage.removeItem('serena_touch_staff_chat_v1'); } catch (_) {}
+                    }}
+                    title="Delete Chat History"
+                    aria-label="Delete Chat History"
+                    className="spa-btn-secondary px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer hover:border-red-400 hover:text-red-200 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-lg">delete</span>
+                    <span>Delete History</span>
+                  </button>
+                  <button
+                    onClick={() => setCurrentView((previousNonMcpView || 'dashboard') as any)}
+                    title="Close Chat and Return to Previous Page"
+                    aria-label="Close Chat"
+                    className="spa-btn-gold px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 cursor-pointer shadow-md"
+                  >
+                    <span className="material-symbols-outlined text-lg">close</span>
+                    <span>Close Chat</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Chat Container */}
-              <div className="bg-surface-base rounded-xl border border-surface-variant flex flex-col flex-1 shadow-sm overflow-hidden min-h-[400px]">
-                {/* Messages Roster */}
-                <div className="flex-1 p-6 overflow-y-auto space-y-4 font-sans text-sm">
+              {/* Transparent Chat Container */}
+              <div className="bg-[#14271f]/30 backdrop-blur-md rounded-2xl border border-[#d8b875]/45 flex flex-col flex-1 shadow-[0_20px_50px_rgba(0,0,0,0.45)] overflow-hidden min-h-[460px]">
+                {/* Messages Roster (Transparent Window for Text - Elderly Readable) */}
+                <div className="flex-1 p-6 overflow-y-auto space-y-4 font-sans text-base bg-transparent">
                   {mcpMessages.map((msg, idx) => (
                     <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] rounded-xl px-4 py-3 shadow-xs leading-relaxed whitespace-pre-wrap ${
+                      <div className={`max-w-[85%] rounded-2xl px-5 py-4 shadow-md leading-relaxed whitespace-pre-wrap ${
                         msg.role === 'user' 
-                          ? 'bg-primary text-white' 
-                          : 'bg-surface-container text-on-surface border border-surface-variant/40'
+                          ? 'bg-gradient-to-r from-[#d8b875] to-[#c9a863] text-[#14271f] font-semibold rounded-tr-xs' 
+                          : 'bg-[#14271f]/55 backdrop-blur-md text-white border border-[#d8b875]/45 border-l-4 border-l-[#d8b875] rounded-tl-xs'
                       }`}>
-                        <div className="font-bold text-[10px] uppercase opacity-75 mb-1">
-                          {msg.role === 'user' ? 'You' : (currentUserRole === 'receptionist' ? 'SPA AI Receptionist' : 'Cal.com AI Companion Agent')}
+                        <div className="flex items-center gap-2 mb-2 font-bold text-xs uppercase">
+                          {msg.role === 'user' ? (
+                            <span className="text-[#14271f]/85 font-bold">You</span>
+                          ) : (
+                            <>
+                              <img src="/S_icon.svg" className="w-4 h-4 rounded object-contain" alt="" />
+                              <span className="font-serif text-[#d8b875] tracking-wide text-sm">Serene Touch SPA</span>
+                              <span className="text-[10px] bg-[#d8b875]/25 text-[#d8b875] px-2 py-0.5 rounded font-bold uppercase">AI Agent</span>
+                            </>
+                          )}
                         </div>
                         
-                        <div>{msg.content}</div>
+                        <div className="text-[16.5px] leading-[1.65] font-medium">{msg.content}</div>
                         {msg.toolInvocations && msg.toolInvocations.map((tool: any, i: number) => (
-                          <div key={i} className="mt-2 text-[10px] bg-primary/10 text-primary px-2 py-1 rounded-md border border-primary/20">
-                            {tool.state === 'result' ? `✅ Finished: ${tool.toolName}` : `⚙️ Running: ${tool.toolName}...`}
+                          <div key={i} className="mt-2.5 text-xs bg-[#14271f]/60 text-[#d8b875] px-3 py-1.5 rounded-lg border border-[#d8b875]/35 flex items-center gap-1.5">
+                            {tool.state === 'result' ? (
+                              <>
+                                <span className="text-emerald-400">✓</span> Completed: {tool.toolName}
+                              </>
+                            ) : (
+                              <>
+                                <span className="w-2 h-2 rounded-full bg-[#d8b875] animate-ping"></span> Running: {tool.toolName}...
+                              </>
+                            )}
                           </div>
                         ))}
-
                       </div>
                     </div>
                   ))}
                   {mcpLoading && (
                     <div className="flex justify-start">
-                      <div className="bg-surface-container text-on-surface border border-surface-variant/40 rounded-xl px-4 py-3 shadow-xs flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"></span>
-                        <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                        <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:0.4s]"></span>
-                        <span className="text-xs text-on-surface-variant italic font-semibold">Agent is running MCP tools...</span>
+                      <div className="bg-[#14271f]/55 backdrop-blur-md text-[#f7f4ee] border border-[#d8b875]/45 border-l-4 border-l-[#d8b875] rounded-2xl rounded-tl-xs px-5 py-4 shadow-md flex items-center gap-3">
+                        <span className="w-2.5 h-2.5 bg-[#d8b875] rounded-full animate-bounce"></span>
+                        <span className="w-2.5 h-2.5 bg-[#d8b875] rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                        <span className="w-2.5 h-2.5 bg-[#d8b875] rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                        <span className="text-sm text-[#d8b875] italic font-medium">Serene Touch SPA AI is processing...</span>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Suggestions Row */}
-                <div className="px-6 py-3 bg-surface-container-low border-t border-surface-variant/60 flex flex-wrap gap-2">
-                  <span className="text-[10px] font-bold text-on-surface-variant/80 uppercase flex items-center gap-1 w-full mb-1">
-                    <span className="material-symbols-outlined text-xs text-primary">tips_and_updates</span> Try asking:
+                {/* Suggestions Row (Transparent) */}
+                <div className="px-6 py-3.5 bg-[#0f1c16]/40 backdrop-blur-md border-t border-[#d8b875]/30 flex flex-wrap gap-2">
+                  <span className="text-xs font-bold text-[#d8b875] uppercase flex items-center gap-1.5 w-full mb-1 tracking-wider">
+                    <span className="material-symbols-outlined text-base text-[#d8b875]">tips_and_updates</span> Suggested queries:
                   </span>
                   <button 
                     disabled={mcpLoading}
                     onClick={() => handleMcpSubmit("What bookings do I have this week?")} 
-                    className="bg-surface-base hover:bg-primary/5 text-primary border border-primary/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+                    className="bg-white/10 hover:bg-[#d8b875]/25 text-[#f7f4ee] hover:text-[#d8b875] border border-[#d8b875]/35 px-3.5 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer disabled:opacity-50"
                   >
                     “What bookings do I have this week?”
                   </button>
                   <button 
                     disabled={mcpLoading}
-                    onClick={() => handleMcpSubmit("Show me my available slots for next Monday")} 
-                    className="bg-surface-base hover:bg-primary/5 text-primary border border-primary/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+                    onClick={() => handleMcpSubmit("Show me available slots for tomorrow")} 
+                    className="bg-white/10 hover:bg-[#d8b875]/25 text-[#f7f4ee] hover:text-[#d8b875] border border-[#d8b875]/35 px-3.5 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer disabled:opacity-50"
                   >
-                    “Show me my available slots”
+                    “Show me available slots for tomorrow”
                   </button>
                   <button 
                     disabled={mcpLoading}
-                    onClick={() => handleMcpSubmit("What event types do I have?")} 
-                    className="bg-surface-base hover:bg-primary/5 text-primary border border-primary/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+                    onClick={() => handleMcpSubmit("What massage treatments are available?")} 
+                    className="bg-white/10 hover:bg-[#d8b875]/25 text-[#f7f4ee] hover:text-[#d8b875] border border-[#d8b875]/35 px-3.5 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer disabled:opacity-50"
                   >
-                    “What event types do I have?”
+                    “What massage treatments are available?”
                   </button>
                   <button 
                     disabled={mcpLoading}
-                    onClick={() => handleMcpSubmit("Create a 30-minute event type called 'Quick Chat'")} 
-                    className="bg-surface-base hover:bg-primary/5 text-primary border border-primary/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+                    onClick={() => handleMcpSubmit("Check Erik's availability for next Monday")} 
+                    className="bg-white/10 hover:bg-[#d8b875]/25 text-[#f7f4ee] hover:text-[#d8b875] border border-[#d8b875]/35 px-3.5 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer disabled:opacity-50"
                   >
-                    “Create a 30-min event type”
+                    “Check Erik's availability for next Monday”
                   </button>
                 </div>
 
-                {/* Input Area */}
-                <div className="p-4 bg-surface border-t border-surface-variant flex gap-3">
+                {/* Input Area (Transparent) */}
+                <div className="p-4 bg-[#0f1c16]/45 backdrop-blur-md border-t border-[#d8b875]/35 flex gap-3">
                   <input
                     type="text"
                     disabled={mcpLoading}
                     value={mcpInput}
                     onChange={handleMcpInputChange}
                     onKeyDown={e => e.key === 'Enter' && handleMcpSubmit()}
-                    placeholder="Type natural language instruction to Cal.com MCP server..."
-                    className="flex-1 bg-sand-light focus:bg-surface-base border border-surface-variant focus:border-primary rounded-xl px-5 py-3.5 text-sm font-semibold outline-none shadow-sm disabled:opacity-50"
+                    placeholder="Ask Serene Touch SPA AI about treatments, availability, or bookings..."
+                    className="flex-1 bg-black/25 focus:bg-black/35 border border-[#d8b875]/45 focus:border-[#d8b875] text-white placeholder-[#f7f4ee]/65 rounded-xl px-5 py-3.5 text-base font-medium outline-none focus:ring-2 focus:ring-[#d8b875]/25 shadow-inner disabled:opacity-50"
                   />
                   <button
                     disabled={mcpLoading || !mcpInput.trim()}
                     onClick={() => handleMcpSubmit()}
-                    className="bg-primary text-white px-6 rounded-xl font-bold flex items-center justify-center gap-1.5 hover:opacity-90 shadow-sm disabled:opacity-50 cursor-pointer"
+                    className="spa-btn-gold px-7 rounded-xl text-base font-bold flex items-center justify-center gap-2 shadow-md disabled:opacity-50 cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-lg">send</span>
                     Send
@@ -6617,17 +6892,18 @@ export default function App() {
 
         {/* Support View */}
         {currentView === 'support' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
+          <main className="flex-1 p-4 sm:p-8 spa-view-picture-bg overflow-y-auto">
             <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
               <div>
                 <h2 className="text-headline-xl font-headline-xl text-on-surface mb-2 uppercase tracking-wider font-headline">Help & Customer Support</h2>
                 <p className="text-body-lg font-body-lg text-on-surface-variant">Ask questions, review document guides, or contact technical assistance.</p>
               </div>
               
-              <div className="bg-surface-base rounded-xl p-8 border border-surface-variant shadow-sm flex flex-col items-center justify-center min-h-[300px] text-center">
-                <span className="material-symbols-outlined text-[64px] text-primary mb-4">contact_support</span>
-                <h3 className="text-headline-md font-bold mb-2 font-headline">Contact Strawberry Technical Desk</h3>
-                <p className="text-body-md text-on-surface-variant max-w-md">For immediate issues regarding Cal.com sync, Google Sheets OAuth integrations, or specialist scheduling conflicts, please contact support@strawberryhotels.com.</p>
+              <div className="spa-picture-modal rounded-2xl p-8 flex flex-col items-center justify-center min-h-[300px] text-center">
+                <span className="material-symbols-outlined text-[64px] text-[#d8b875] mb-4">contact_support</span>
+                {/* [BRAND: SERENA_TOUCH] */}
+                <h3 className="text-headline-md font-bold mb-2 font-serif text-[#d8b875]">Contact SERENA TOUCH Concierge Desk</h3>
+                <p className="text-body-md text-[#f7f4ee]/85 max-w-md">For immediate assistance regarding appointment schedules, therapist assignments, or reception sync, please contact concierge@serenatouch.com.</p>
               </div>
             </div>
           </main>
@@ -6635,11 +6911,11 @@ export default function App() {
 
         {/* Availability Lookup View */}
         {currentView === 'availability' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
+          <main className="flex-1 p-4 sm:p-8 spa-view-picture-bg overflow-y-auto">
             <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
               <div>
                 <h2 className="text-headline-xl font-headline-xl text-on-surface mb-2 font-headline uppercase tracking-wider">Availability Lookup</h2>
-                <p className="text-body-lg font-body-lg text-on-surface-variant">Query real-time therapist scheduling slots from Cal.diy / Cal.com integration endpoints.</p>
+                <p className="text-body-lg font-body-lg text-on-surface-variant">Query real-time therapist scheduling slots from SERENA TOUCH reservation endpoints.</p>
               </div>
               <div className="bg-surface-base rounded-xl p-6 border border-surface-variant shadow-sm space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -6728,7 +7004,7 @@ export default function App() {
                     {isLoadingAvailability ? (
                       <>
                         <span className="material-symbols-outlined text-[20px] animate-spin">sync</span>
-                        Querying Cal.diy...
+                        Querying Schedule...
                       </>
                     ) : (
                       <>
@@ -6808,7 +7084,7 @@ export default function App() {
 
         {/* Bookings Registry View */}
         {currentView === 'bookings' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
+          <main className="flex-1 p-4 sm:p-8 spa-view-picture-bg overflow-y-auto">
             <div className="max-w-7xl mx-auto space-y-8 animate-fade-in text-on-surface">
               <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4">
                 <div>
@@ -7048,73 +7324,85 @@ export default function App() {
 
         {/* Week View */}
         {currentView === 'week' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
+          <main 
+            className="flex-1 p-4 sm:p-8 overflow-y-auto relative text-[#f7f4ee]"
+            style={{
+              backgroundImage: 'linear-gradient(135deg, rgba(20, 39, 31, 0.55) 0%, rgba(15, 28, 22, 0.68) 100%), url(/spa-bg.jpg)',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundAttachment: 'fixed'
+            }}
+          >
             <div className="max-w-7xl mx-auto space-y-8 animate-fade-in">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4 bg-[#14271f]/35 backdrop-blur-md p-6 rounded-2xl border border-[#d8b875]/40 shadow-xl">
                 <div>
-                  <h2 className="text-headline-xl font-headline-xl text-on-surface mb-2 font-headline">Week View Schedule</h2>
+                  <h2 className="text-3xl font-serif font-bold text-[#d8b875] mb-2 flex items-center gap-3">
+                    <img src="/S_icon.svg" className="w-8 h-8 rounded-lg shadow-md" alt="S" />
+                    Week View Schedule
+                  </h2>
                   <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[18px] text-primary">calendar_today</span>
-                    <span className="text-body-lg text-on-surface font-semibold mr-4">
+                    <span className="material-symbols-outlined text-[18px] text-[#d8b875]">calendar_today</span>
+                    <span className="text-body-lg text-[#f7f4ee]/90 font-semibold mr-4">
                       {getWeekRangeLabel(weekDates)}
                     </span>
                     <input 
                       type="date" 
                       value={dashboardDate} 
                       onChange={e => setDashboardDate(e.target.value)} 
-                      className="bg-transparent border-b border-dashed border-primary text-body-md font-body-md text-on-surface focus:outline-none focus:border-solid cursor-pointer"
+                      className="bg-black/30 border border-[#d8b875]/40 text-[#f7f4ee] rounded-lg px-3 py-1.5 text-body-md font-body-md focus:outline-none focus:border-[#d8b875] cursor-pointer"
                     />
                   </div>
                 </div>
-                <div className="text-sm text-on-surface-variant font-medium bg-surface-base px-3 py-1.5 rounded-lg border border-surface-variant">
+                <div className="text-xs text-[#d8b875] font-bold bg-[#14271f]/45 backdrop-blur-sm px-4 py-2 rounded-lg border border-[#d8b875]/40 shadow-sm flex items-center gap-2 uppercase tracking-wider">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                   Weekly Scope Stats
                 </div>
               </div>
 
-              {/* Weekly KPI statistics cards */}
+              {/* Weekly KPI statistics cards (More Transparent) */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
-                <div className="bg-surface-base p-4 rounded-xl border border-surface-variant shadow-sm">
+                <div className="bg-[#14271f]/30 backdrop-blur-md p-5 rounded-xl border border-[#d8b875]/35 shadow-lg">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase">Total Appts</p>
-                    <span className="material-symbols-outlined text-outline">calendar_today</span>
+                    <p className="text-label-sm font-label-sm text-[#d8b875] uppercase font-bold tracking-wider">Total Appts</p>
+                    <span className="material-symbols-outlined text-[#d8b875]">calendar_today</span>
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className="text-headline-md font-headline-md text-on-surface">{weekKpiTotal}</span>
+                    <span className="text-3xl font-serif font-bold text-[#f7f4ee]">{weekKpiTotal}</span>
                   </div>
                 </div>
 
-                <div className="bg-surface-base p-4 rounded-xl border border-surface-variant shadow-sm border-l-4 border-primary">
+                <div className="bg-[#14271f]/30 backdrop-blur-md p-5 rounded-xl border border-emerald-400/40 border-l-4 border-l-emerald-400 shadow-lg">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase">Confirmed</p>
-                    <span className="material-symbols-outlined text-primary">check_circle</span>
+                    <p className="text-label-sm font-label-sm text-emerald-300 uppercase font-bold tracking-wider">Confirmed</p>
+                    <span className="material-symbols-outlined text-emerald-400">check_circle</span>
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className="text-headline-md font-headline-md text-primary">{weekKpiConfirmed}</span>
+                    <span className="text-3xl font-serif font-bold text-emerald-300">{weekKpiConfirmed}</span>
                   </div>
                 </div>
 
-                <div className="bg-surface-base p-4 rounded-xl border border-surface-variant shadow-sm border-l-4 border-[#EAB308]">
+                <div className="bg-[#14271f]/30 backdrop-blur-md p-5 rounded-xl border border-[#d8b875]/40 border-l-4 border-l-[#d8b875] shadow-lg">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase">Pending</p>
-                    <span className="material-symbols-outlined text-[#B45309]">schedule</span>
+                    <p className="text-label-sm font-label-sm text-[#d8b875] uppercase font-bold tracking-wider">Pending</p>
+                    <span className="material-symbols-outlined text-[#d8b875]">schedule</span>
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className="text-headline-md font-headline-md text-[#B45309]">{weekKpiPending}</span>
+                    <span className="text-3xl font-serif font-bold text-[#d8b875]">{weekKpiPending}</span>
                   </div>
                 </div>
 
-                <div className="bg-surface-base p-4 rounded-xl border border-surface-variant shadow-sm border-l-4 border-[#FC5E58]">
+                <div className="bg-[#14271f]/30 backdrop-blur-md p-5 rounded-xl border border-rose-400/40 border-l-4 border-l-rose-400 shadow-lg">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase">Canceled</p>
-                    <span className="material-symbols-outlined text-[#FC5E58]">cancel</span>
+                    <p className="text-label-sm font-label-sm text-rose-300 uppercase font-bold tracking-wider">Canceled</p>
+                    <span className="material-symbols-outlined text-rose-400">cancel</span>
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className="text-headline-md font-headline-md text-[#FC5E58]">{weekKpiCanceled}</span>
+                    <span className="text-3xl font-serif font-bold text-rose-300">{weekKpiCanceled}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Weekly Calendar Columns */}
+              {/* Weekly Calendar Columns (More Transparent Cards) */}
               <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
                 {weekDates.map((dateStr) => {
                   const dayName = new Date(dateStr).toLocaleDateString([], { weekday: 'short' });
@@ -7127,23 +7415,23 @@ export default function App() {
                     <div 
                       key={dateStr} 
                       onDragOver={e => e.preventDefault()}
-                      onDragEnter={e => e.currentTarget.classList.add('bg-primary/5')}
-                      onDragLeave={e => e.currentTarget.classList.remove('bg-primary/5')}
+                      onDragEnter={e => e.currentTarget.classList.add('bg-[#d8b875]/20')}
+                      onDragLeave={e => e.currentTarget.classList.remove('bg-[#d8b875]/20')}
                       onDrop={e => {
-                        e.currentTarget.classList.remove('bg-primary/5');
+                        e.currentTarget.classList.remove('bg-[#d8b875]/20');
                         handleDropOnWeekDay(e, dateStr);
                       }}
                       onClick={() => setDashboardDate(dateStr)}
-                      className={`bg-surface-base rounded-xl border p-4 flex flex-col min-h-[350px] shadow-sm transition-all duration-200 clickable-hover-effect cursor-pointer ${isToday ? 'border-primary ring-2 ring-primary/10' : 'border-surface-variant'}`}
+                      className={`bg-[#14271f]/30 backdrop-blur-md rounded-xl border p-4 flex flex-col min-h-[360px] shadow-lg transition-all duration-200 clickable-hover-effect cursor-pointer ${isToday ? 'border-[#d8b875] ring-2 ring-[#d8b875]/40 shadow-[0_0_25px_rgba(216,184,117,0.25)]' : 'border-[#d8b875]/30 hover:border-[#d8b875]/60'}`}
                     >
-                      <div className="border-b border-surface-variant pb-2 mb-3 text-center">
-                        <p className={`text-xs font-bold uppercase ${isToday ? 'text-primary' : 'text-on-surface-variant'}`}>{dayName}</p>
-                        <p className={`text-xl font-extrabold font-headline ${isToday ? 'text-primary' : 'text-on-surface'}`}>{dayNum}</p>
+                      <div className="border-b border-[#d8b875]/25 pb-2 mb-3 text-center">
+                        <p className={`text-xs font-bold uppercase tracking-wider ${isToday ? 'text-[#d8b875]' : 'text-[#f7f4ee]/80'}`}>{dayName}</p>
+                        <p className={`text-2xl font-serif font-extrabold ${isToday ? 'text-[#d8b875]' : 'text-white'}`}>{dayNum}</p>
                       </div>
                       
-                      <div className="flex-1 space-y-2 overflow-y-auto max-h-[400px] pr-1">
+                      <div className="flex-1 space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
                         {dayAppts.length === 0 ? (
-                          <div className="h-full flex items-center justify-center text-center text-[10px] text-on-surface-variant/40 italic py-8">
+                          <div className="h-full flex items-center justify-center text-center text-xs text-[#f7f4ee]/60 italic py-8">
                             No bookings
                           </div>
                         ) : (
@@ -7157,18 +7445,18 @@ export default function App() {
                               }}
                               onDragEnd={() => setIsDraggingAppt(false)}
                               onClick={(e) => { e.stopPropagation(); setSelectedAppointment(appt); }}
-                              className={`p-2.5 rounded-lg border text-left cursor-pointer transition-all duration-200 clickable-hover-effect ${
-                                appt.status === 'confirmed' ? 'bg-primary/5 border-primary/20 text-primary' :
-                                appt.status === 'pending' || appt.status === 'needs_action' ? 'bg-[#EAB308]/5 border-[#EAB308]/20 text-[#B45309]' :
-                                'bg-surface-variant/30 border-outline/20 text-outline opacity-60'
+                              className={`p-3 rounded-lg border text-left cursor-pointer transition-all duration-200 clickable-hover-effect shadow-md backdrop-blur-sm ${
+                                appt.status === 'confirmed' ? 'bg-[#14271f]/45 border-[#d8b875]/45 text-[#f7f4ee] hover:border-[#d8b875]' :
+                                appt.status === 'pending' || appt.status === 'needs_action' ? 'bg-amber-950/45 border-amber-500/45 text-amber-200' :
+                                'bg-black/30 border-white/15 text-white/60 opacity-75'
                               }`}
                             >
                               <div className="flex justify-between items-start gap-1">
-                                <span className="text-[10px] font-bold uppercase tracking-wider font-mono">{appt.timeLabel.split(' - ')[0]}</span>
-                                {appt.vip && <span className="w-1.5 h-1.5 rounded-full bg-accent-coral"></span>}
+                                <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-[#d8b875]">{appt.timeLabel.split(' - ')[0]}</span>
+                                {appt.vip && <span className="w-2 h-2 rounded-full bg-[#d8b875] shadow-[0_0_8px_#d8b875]"></span>}
                               </div>
-                              <p className="text-xs font-bold text-on-surface truncate mt-1">{appt.client}</p>
-                              <p className="text-[10px] text-on-surface-variant truncate font-medium">{appt.procedure}</p>
+                              <p className="text-xs font-bold text-white truncate mt-1">{appt.client}</p>
+                              <p className="text-[10px] text-[#f7f4ee]/85 truncate font-medium">{appt.procedure}</p>
                             </div>
                           ))
                         )}
@@ -7183,84 +7471,95 @@ export default function App() {
 
         {/* Month View */}
         {currentView === 'month' && (
-          <main className="flex-1 p-4 sm:p-8 bg-surface-muted overflow-y-auto">
+          <main 
+            className="flex-1 p-4 sm:p-8 overflow-y-auto relative text-[#f7f4ee]"
+            style={{
+              backgroundImage: 'linear-gradient(135deg, rgba(20, 39, 31, 0.55) 0%, rgba(15, 28, 22, 0.68) 100%), url(/spa-bg.jpg)',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundAttachment: 'fixed'
+            }}
+          >
             <div className="max-w-5xl mx-auto space-y-8 animate-fade-in">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4 bg-[#14271f]/35 backdrop-blur-md p-6 rounded-2xl border border-[#d8b875]/40 shadow-xl">
                 <div>
-                  <h2 className="text-headline-xl font-headline-xl text-on-surface mb-2 font-headline">Month View Schedule</h2>
+                  <h2 className="text-3xl font-serif font-bold text-[#d8b875] mb-2 flex items-center gap-3">
+                    <img src="/S_icon.svg" className="w-8 h-8 rounded-lg shadow-md" alt="S" />
+                    Month View Schedule
+                  </h2>
                   <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[18px] text-primary">calendar_today</span>
-                    <span className="text-body-lg text-on-surface font-semibold mr-4">
+                    <span className="material-symbols-outlined text-[18px] text-[#d8b875]">calendar_today</span>
+                    <span className="text-body-lg text-[#f7f4ee]/90 font-semibold mr-4">
                       {new Date(dashboardDate).toLocaleDateString([], { month: 'long', year: 'numeric' })}
                     </span>
                     <input 
                       type="date" 
                       value={dashboardDate} 
                       onChange={e => setDashboardDate(e.target.value)} 
-                      className="bg-transparent border-b border-dashed border-primary text-body-md font-body-md text-on-surface focus:outline-none focus:border-solid cursor-pointer"
+                      className="bg-transparent border-b border-dashed border-[#d8b875] text-body-md font-body-md text-[#f7f4ee] focus:outline-none focus:border-solid cursor-pointer"
                     />
                   </div>
                 </div>
-                <div className="text-sm text-on-surface-variant font-medium bg-surface-base px-3 py-1.5 rounded-lg border border-surface-variant">
+                <div className="text-sm text-[#d8b875] font-bold bg-[#0f1c16]/40 px-4 py-2 rounded-xl border border-[#d8b875]/35">
                   Monthly Scope Stats
                 </div>
               </div>
 
               {/* Monthly KPI statistics cards */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
-                <div className="bg-surface-base p-4 rounded-xl border border-surface-variant shadow-sm">
+                <div className="bg-[#14271f]/35 backdrop-blur-md p-4 rounded-xl border border-[#d8b875]/35 shadow-lg">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase">Total Appts</p>
-                    <span className="material-symbols-outlined text-outline">calendar_today</span>
+                    <p className="text-label-sm font-label-sm text-[#d8b875] uppercase font-bold">Total Appts</p>
+                    <span className="material-symbols-outlined text-[#d8b875]/80">calendar_today</span>
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className="text-headline-md font-headline-md text-on-surface">{monthKpiTotal}</span>
+                    <span className="text-headline-md font-headline-md text-[#f7f4ee]">{monthKpiTotal}</span>
                   </div>
                 </div>
 
-                <div className="bg-surface-base p-4 rounded-xl border border-surface-variant shadow-sm border-l-4 border-primary">
+                <div className="bg-[#14271f]/35 backdrop-blur-md p-4 rounded-xl border border-[#d8b875]/35 shadow-lg border-l-4 border-l-emerald-400">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase">Confirmed</p>
-                    <span className="material-symbols-outlined text-primary">check_circle</span>
+                    <p className="text-label-sm font-label-sm text-emerald-300 uppercase font-bold">Confirmed</p>
+                    <span className="material-symbols-outlined text-emerald-400">check_circle</span>
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className="text-headline-md font-headline-md text-primary">{monthKpiConfirmed}</span>
+                    <span className="text-headline-md font-headline-md text-emerald-300">{monthKpiConfirmed}</span>
                   </div>
                 </div>
 
-                <div className="bg-surface-base p-4 rounded-xl border border-surface-variant shadow-sm border-l-4 border-[#EAB308]">
+                <div className="bg-[#14271f]/35 backdrop-blur-md p-4 rounded-xl border border-[#d8b875]/35 shadow-lg border-l-4 border-l-[#d8b875]">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase">Pending</p>
-                    <span className="material-symbols-outlined text-[#B45309]">schedule</span>
+                    <p className="text-label-sm font-label-sm text-[#d8b875] uppercase font-bold">Pending</p>
+                    <span className="material-symbols-outlined text-[#d8b875]">schedule</span>
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className="text-headline-md font-headline-md text-[#B45309]">{monthKpiPending}</span>
+                    <span className="text-headline-md font-headline-md text-[#d8b875]">{monthKpiPending}</span>
                   </div>
                 </div>
 
-                <div className="bg-surface-base p-4 rounded-xl border border-surface-variant shadow-sm border-l-4 border-[#FC5E58]">
+                <div className="bg-[#14271f]/35 backdrop-blur-md p-4 rounded-xl border border-[#d8b875]/35 shadow-lg border-l-4 border-l-red-400">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase">Canceled</p>
-                    <span className="material-symbols-outlined text-[#FC5E58]">cancel</span>
+                    <p className="text-label-sm font-label-sm text-red-300 uppercase font-bold">Canceled</p>
+                    <span className="material-symbols-outlined text-red-400">cancel</span>
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className="text-headline-md font-headline-md text-[#FC5E58]">{monthKpiCanceled}</span>
+                    <span className="text-headline-md font-headline-md text-red-300">{monthKpiCanceled}</span>
                   </div>
                 </div>
               </div>
 
               {/* Monthly Calendar Grid */}
-              <div className="bg-surface-base rounded-xl border border-surface-variant p-4 sm:p-6 shadow-sm">
+              <div className="bg-[#14271f]/35 backdrop-blur-md rounded-2xl border border-[#d8b875]/35 p-4 sm:p-6 shadow-xl">
                 <div className="grid grid-cols-7 gap-2 mb-4 text-center">
                   {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
-                    <span key={day} className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">{day}</span>
+                    <span key={day} className="text-xs font-bold text-[#d8b875] uppercase tracking-wider">{day}</span>
                   ))}
                 </div>
                 
                 <div className="grid grid-cols-7 gap-2">
                   {getDaysInMonthGrid(dashboardDate).map((cell, index) => {
                     if (!cell) {
-                      return <div key={`empty-${index}`} className="aspect-square bg-surface-muted/20 rounded-lg border border-transparent"></div>;
+                      return <div key={`empty-${index}`} className="aspect-square bg-white/5 rounded-lg border border-transparent"></div>;
                     }
                     
                     const cellAppts = appointments.filter(a => (a.date || '2023-10-24') === cell.dateStr && a.status !== 'cancelled');
@@ -7276,17 +7575,17 @@ export default function App() {
                           triggerNotification(`Switched dashboard view to ${cell.dateStr}`);
                         }}
                         className={`aspect-square p-2 rounded-lg border flex flex-col justify-between cursor-pointer transition-all duration-200 clickable-hover-effect ${
-                          isCurrent ? 'bg-primary/10 border-primary font-bold' :
-                          isToday ? 'border-primary ring-1 ring-primary/20 bg-surface-muted/10' :
-                          'bg-surface-base border-surface-variant/70'
+                          isCurrent ? 'bg-[#d8b875]/25 border-[#d8b875] font-bold' :
+                          isToday ? 'border-[#d8b875] ring-1 ring-[#d8b875]/40 bg-white/10' :
+                          'bg-[#14271f]/40 border-[#d8b875]/25 hover:bg-[#14271f]/60'
                         }`}
                       >
-                        <span className={`text-xs ${isCurrent ? 'text-primary font-extrabold' : 'text-on-surface'}`}>{cell.dayNum}</span>
+                        <span className={`text-xs ${isCurrent ? 'text-[#d8b875] font-extrabold' : 'text-[#f7f4ee]'}`}>{cell.dayNum}</span>
                         
                         <div className="flex flex-col items-end gap-1">
                           {cellAppts.length > 0 && (
                             <>
-                              <span className="text-[9px] font-extrabold bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-mono">
+                              <span className="text-[9px] font-extrabold bg-[#d8b875]/20 text-[#d8b875] px-1.5 py-0.5 rounded-full font-mono">
                                 {cellAppts.length}
                               </span>
                               <div className="flex gap-0.5 flex-wrap justify-end max-w-full mt-0.5">
@@ -7323,25 +7622,25 @@ export default function App() {
       {/* Appointment Detail / Reschedule Modal */}
       {selectedAppointment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div onClick={() => { setSelectedAppointment(null); setIsRescheduling(false); }} className="fixed inset-0 bg-on-surface/20 backdrop-blur-sm transition-opacity"></div>
+          <div onClick={() => { setSelectedAppointment(null); setIsRescheduling(false); }} className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"></div>
           
-          <div className="bg-surface-container-lowest w-full max-w-2xl rounded-xl shadow-[0_8px_32px_rgba(74,142,142,0.08)] flex flex-col max-h-[90vh] overflow-hidden border border-surface-variant relative z-10 animate-fade-in" id="appointmentModal">
-            <button onClick={() => { setSelectedAppointment(null); setIsRescheduling(false); }} aria-label="Close modal" className="absolute top-4 right-4 p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 rounded-full hover:bg-surface-container-low group z-10">
+          <div className="spa-picture-modal w-full max-w-2xl rounded-2xl flex flex-col max-h-[90vh] overflow-hidden relative z-10 animate-fade-in shadow-2xl" id="appointmentModal">
+            <button onClick={() => { setSelectedAppointment(null); setIsRescheduling(false); }} aria-label="Close modal" className="absolute top-4 right-4 p-2 text-[#d8b875] hover:text-white transition-colors duration-200 rounded-full hover:bg-white/10 group z-20">
               <span className="material-symbols-outlined text-2xl group-hover:scale-90 transition-transform">close</span>
             </button>
             
-            <div className="px-6 sm:px-8 pt-8 pb-6 border-b border-surface-variant bg-surface-container-lowest flex flex-col gap-2 relative">
-              <h2 className="font-headline-lg text-headline-lg text-on-surface mb-1">
+            <div className="modal-header px-6 sm:px-8 pt-8 pb-6 flex flex-col gap-2 relative">
+              <h2 className="font-serif text-2xl font-bold text-[#d8b875] mb-1">
                 {selectedAppointment.isCleaningBlock ? '🧹 Cleaning Block Details' : selectedAppointment.isBreakBlock ? '☕ Therapist Break Details' : isRescheduling ? 'Appointment Service Selection' : 'Appointment Details'}
               </h2>
-              <div className="flex items-center gap-3 text-on-surface-variant">
+              <div className="flex items-center gap-3 text-[#f7f4ee]/80">
                 <span className="material-symbols-outlined text-[18px]">calendar_today</span>
                 <span className="font-body-md text-body-md">{selectedAppointment.date || 'Oct 24, 2023'} • {selectedAppointment.timeLabel}</span>
               </div>
               {!selectedAppointment.isCleaningBlock && !selectedAppointment.isBreakBlock && (
                 <div className="mt-4 flex">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary-container text-on-secondary-container font-label-md text-label-md border border-secondary-fixed">
-                    <span className={`w-1.5 h-1.5 rounded-full ${selectedAppointment.status === 'confirmed' ? 'bg-primary' : 'bg-strawberry-red'}`}></span>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 text-[#f7f4ee] font-label-md text-label-md border border-[#d8b875]/30">
+                    <span className={`w-1.5 h-1.5 rounded-full ${selectedAppointment.status === 'confirmed' ? 'bg-emerald-400' : 'bg-[#d8b875]'}`}></span>
                     {selectedAppointment.status === 'confirmed' ? 'Confirmed' : 'Pending Confirmation'}
                   </span>
                 </div>
@@ -7846,14 +8145,14 @@ export default function App() {
                     {!isRescheduling ? (
                       <button 
                         onClick={handleSaveReschedule}
-                        className="h-12 px-6 sm:px-8 rounded-lg bg-strawberry-red text-on-primary font-label-md text-label-md hover:opacity-90 shadow-sm transition-all flex items-center justify-center gap-2 clickable-hover-effect cursor-pointer"
+                        className="spa-btn-gold h-12 px-6 sm:px-8 rounded-lg text-label-md font-bold shadow-md transition-all flex items-center justify-center gap-2 clickable-hover-effect cursor-pointer"
                       >
                         <span className="material-symbols-outlined text-[18px]">save</span>{reschedSaveAsPending ? 'Save Request' : 'Save Changes'}
                       </button>
                     ) : (
                       <button 
                         onClick={handleSaveReschedule}
-                        className="h-12 px-6 sm:px-8 rounded-lg bg-strawberry-red text-on-primary font-label-md text-label-md hover:opacity-90 shadow-sm transition-all flex items-center justify-center gap-2 clickable-hover-effect cursor-pointer"
+                        className="spa-btn-gold h-12 px-6 sm:px-8 rounded-lg text-label-md font-bold shadow-md transition-all flex items-center justify-center gap-2 clickable-hover-effect cursor-pointer"
                       >
                         <span className="material-symbols-outlined text-[18px]">save</span>{reschedSaveAsPending ? 'Save Request' : 'Save Reschedule'}
                       </button>
@@ -8015,34 +8314,34 @@ export default function App() {
       {/* Cancellation Reason Modal */}
       {showCancelModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div onClick={() => setShowCancelModal(false)} className="fixed inset-0 bg-on-surface/20 backdrop-blur-sm transition-opacity"></div>
+          <div onClick={() => setShowCancelModal(false)} className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"></div>
           
-          <form onSubmit={handleCommitCancellation} className="bg-surface-container-lowest w-full max-w-md rounded-xl shadow-[0_8px_32px_rgba(74,142,142,0.08)] flex flex-col overflow-hidden border border-surface-variant relative z-20 animate-fade-in">
-            <button type="button" onClick={() => setShowCancelModal(false)} className="absolute top-4 right-4 p-2 text-on-surface-variant hover:text-primary transition-colors rounded-full hover:bg-surface-container-low">
+          <form onSubmit={handleCommitCancellation} className="spa-picture-modal w-full max-w-md rounded-2xl flex flex-col overflow-hidden relative z-20 animate-fade-in shadow-2xl">
+            <button type="button" onClick={() => setShowCancelModal(false)} className="absolute top-4 right-4 p-2 text-[#d8b875] hover:text-white transition-colors rounded-full hover:bg-white/10">
               <span className="material-symbols-outlined text-2xl">close</span>
             </button>
             
-            <div className="px-6 pt-8 pb-4 border-b border-surface-variant bg-surface-container-lowest flex flex-col gap-1">
-              <h2 className="font-headline-md text-headline-md text-on-surface font-headline">Cancel Appointment</h2>
-              <p className="text-body-md text-on-surface-variant">Are you sure you want to cancel this booking? This action will sync to the Cal.diy API endpoint.</p>
+            <div className="modal-header px-6 pt-8 pb-4 flex flex-col gap-1">
+              <h2 className="font-serif text-2xl font-bold text-[#d8b875]">Cancel Appointment</h2>
+              <p className="text-body-md text-[#f7f4ee]/80">Are you sure you want to cancel this booking? This action will immediately update the spa reservation schedule.</p>
             </div>
 
-            <div className="px-6 py-5 bg-surface space-y-4">
+            <div className="modal-content-area px-6 py-5 space-y-4">
               <div>
-                <label className="block text-label-sm font-label-sm text-on-surface-variant mb-1 uppercase tracking-wider font-bold">Cancellation Reason (Required)</label>
+                <label className="block text-label-sm font-label-sm text-[#d8b875] mb-1 uppercase tracking-wider font-bold">Cancellation Reason (Required)</label>
                 <textarea 
                   required
                   value={cancelReason}
                   onChange={e => setCancelReason(e.target.value)}
                   placeholder="e.g. Client requested cancellation due to scheduling conflict."
-                  className="w-full bg-sand-light focus:bg-surface-base border border-surface-variant focus:border-primary rounded-lg px-4 py-2 text-body-md outline-none resize-none h-24"
+                  className="w-full rounded-lg px-4 py-2 text-body-md outline-none resize-none h-24"
                 />
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-surface-variant bg-surface-container-lowest flex justify-end gap-3">
-              <button type="button" onClick={() => setShowCancelModal(false)} className="h-10 px-5 rounded-lg bg-surface-container-low text-on-surface-variant text-label-md font-semibold hover:bg-surface-container transition-colors">Go Back</button>
-              <button type="submit" className="h-10 px-6 rounded-lg bg-[#FC5E58] text-white text-label-md font-bold hover:opacity-90 shadow-sm transition-all flex items-center gap-1.5">
+            <div className="modal-header px-6 py-4 flex justify-end gap-3">
+              <button type="button" onClick={() => setShowCancelModal(false)} className="spa-btn-secondary h-10 px-5 rounded-lg text-label-md font-semibold transition-colors">Go Back</button>
+              <button type="submit" className="h-10 px-6 rounded-lg bg-red-700/80 hover:bg-red-700 border border-red-500/50 text-white text-label-md font-bold shadow-md transition-all flex items-center gap-1.5">
                 <span className="material-symbols-outlined text-[18px]">cancel</span>
                 Confirm Cancellation
               </button>
@@ -8241,19 +8540,19 @@ export default function App() {
       {/* QUICK BOOK / NEW APPOINTMENT MODAL */}
       {showBookingModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div onClick={() => setShowBookingModal(false)} className="fixed inset-0 bg-on-surface/20 backdrop-blur-sm transition-opacity"></div>
+          <div onClick={() => setShowBookingModal(false)} className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"></div>
           
-          <form onSubmit={handleSaveNewBooking} className="bg-surface-container-lowest w-full max-w-4xl rounded-2xl shadow-[0_16px_48px_rgba(74,142,142,0.12)] flex flex-col max-h-[90vh] overflow-hidden border border-surface-variant relative z-10 animate-fade-in">
-            <button type="button" onClick={() => setShowBookingModal(false)} className="absolute top-5 right-5 p-2.5 text-on-surface-variant hover:text-primary transition-colors rounded-full hover:bg-surface-container-low">
+          <form onSubmit={handleSaveNewBooking} className="spa-picture-modal w-full max-w-4xl rounded-2xl flex flex-col max-h-[90vh] overflow-hidden relative z-10 animate-fade-in shadow-2xl">
+            <button type="button" onClick={() => setShowBookingModal(false)} className="absolute top-5 right-5 p-2.5 text-[#d8b875] hover:text-white transition-colors rounded-full hover:bg-white/10 z-20">
               <span className="material-symbols-outlined text-2xl font-bold">close</span>
             </button>
             
-            <div className="px-8 sm:px-10 pt-10 pb-5 border-b border-surface-variant bg-surface-container-lowest flex flex-col gap-1.5">
-              <h2 className="font-headline-lg text-headline-lg text-on-surface text-3xl font-extrabold">New Appointment Booking</h2>
-              <p className="text-body-lg text-on-surface-variant text-base">Schedule a new client appointment slot with full specifications.</p>
+            <div className="modal-header px-8 sm:px-10 pt-8 pb-5 flex flex-col gap-1.5">
+              <h2 className="font-serif text-3xl font-bold text-[#d8b875]">New Appointment Booking</h2>
+              <p className="text-body-lg text-[#f7f4ee]/80 text-base">Schedule a serene client appointment slot with full therapist specifications.</p>
             </div>
 
-            <div className="px-8 sm:px-10 py-8 overflow-y-auto flex-1 space-y-6 bg-surface text-on-surface">
+            <div className="modal-content-area px-8 sm:px-10 py-8 overflow-y-auto flex-1 space-y-6">
               <div className="relative">
                 <label className="block text-sm font-bold text-on-surface-variant mb-2 uppercase tracking-wide">Client Name</label>
                 <input 
@@ -8511,19 +8810,19 @@ export default function App() {
               </div>
             </div>
 
-            <div className="px-6 sm:px-8 py-4 border-t border-surface-variant bg-surface-container-lowest flex justify-between items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer text-sm text-on-surface-variant font-medium">
+            <div className="modal-header px-6 sm:px-8 py-4 flex justify-between items-center gap-3">
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-[#f7f4ee]/80 font-medium">
                 <input 
                   type="checkbox" 
                   checked={bookSaveAsPending} 
                   onChange={(e) => setBookSaveAsPending(e.target.checked)} 
-                  className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary"
+                  className="w-4 h-4 rounded border-[#d8b875]/40 text-[#d8b875] focus:ring-[#d8b875]"
                 />
                 Save to Pending Requests
               </label>
               <div className="flex gap-3">
-                <button type="button" onClick={() => setShowBookingModal(false)} className="h-10 px-5 rounded-lg bg-surface-container-low text-on-surface-variant text-label-md font-semibold hover:bg-surface-container transition-colors clickable-hover-effect cursor-pointer">Cancel</button>
-                <button type="submit" className="h-10 px-8 rounded-lg bg-primary text-white text-label-md font-bold hover:opacity-90 shadow-sm transition-all clickable-hover-effect cursor-pointer">{bookSaveAsPending ? 'Save Request' : 'Book Appointment'}</button>
+                <button type="button" onClick={() => setShowBookingModal(false)} className="spa-btn-secondary h-10 px-5 rounded-lg text-label-md font-semibold clickable-hover-effect cursor-pointer">Cancel</button>
+                <button type="submit" className="spa-btn-gold h-10 px-8 rounded-lg text-label-md font-bold shadow-md clickable-hover-effect cursor-pointer">{bookSaveAsPending ? 'Save Request' : 'Book Appointment'}</button>
               </div>
             </div>
           </form>
@@ -8533,19 +8832,19 @@ export default function App() {
       {/* RESCHEDULE INCOMING REQUEST MODAL */}
       {rescheduleRequest && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div onClick={() => setRescheduleRequest(null)} className="fixed inset-0 bg-on-surface/20 backdrop-blur-sm transition-opacity"></div>
+          <div onClick={() => setRescheduleRequest(null)} className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"></div>
           
-          <form onSubmit={handleSaveReschedRequest} className="bg-surface-container-lowest w-full max-w-2xl rounded-2xl shadow-[0_16px_48px_rgba(74,142,142,0.12)] flex flex-col max-h-[90vh] overflow-hidden border border-surface-variant relative z-10 animate-fade-in">
-            <button type="button" onClick={() => setRescheduleRequest(null)} className="absolute top-5 right-5 p-2.5 text-on-surface-variant hover:text-primary transition-colors rounded-full hover:bg-surface-container-low">
+          <form onSubmit={handleSaveReschedRequest} className="spa-picture-modal w-full max-w-2xl rounded-2xl flex flex-col max-h-[90vh] overflow-hidden relative z-10 animate-fade-in">
+            <button type="button" onClick={() => setRescheduleRequest(null)} className="absolute top-5 right-5 p-2.5 text-[#d8b875] hover:text-white transition-colors rounded-full hover:bg-white/10">
               <span className="material-symbols-outlined text-2xl font-bold">close</span>
             </button>
             
-            <div className="px-8 pt-10 pb-5 border-b border-surface-variant bg-surface-container-lowest flex flex-col gap-1.5">
-              <h2 className="font-headline-lg text-headline-lg text-on-surface text-3xl font-extrabold">Reschedule Booking Request</h2>
-              <p className="text-body-lg text-on-surface-variant text-base">Update preferred specialist and slot timings with larger input fields.</p>
+            <div className="modal-header px-8 pt-10 pb-5 flex flex-col gap-1.5">
+              <h2 className="font-serif text-[#d8b875] text-3xl font-bold">Reschedule Booking Request</h2>
+              <p className="text-body-lg text-[#f7f4ee]/80 text-base">Update preferred specialist and slot timings.</p>
             </div>
  
-            <div className="px-8 py-8 space-y-6 bg-surface text-on-surface">
+            <div className="modal-content-area px-8 py-8 space-y-6">
               <div className="relative">
                 <label className="block text-sm font-bold text-on-surface-variant mb-2 uppercase tracking-wide">Client Name</label>
                 <input 
@@ -8695,7 +8994,7 @@ export default function App() {
                 <div><strong>Client:</strong> {selectedAuditLogBooking.client}</div>
                 <div><strong>Treatment:</strong> {selectedAuditLogBooking.procedure}</div>
                 <div><strong>Specialist:</strong> {selectedAuditLogBooking.specialist}</div>
-                <div><strong>Cal.diy UID:</strong> <code className="font-bold text-primary">{selectedAuditLogBooking.cal_booking_uid || 'Not mapped (Local Mock)'}</code></div>
+                <div><strong>Booking UID:</strong> <code className="font-bold text-primary">{selectedAuditLogBooking.cal_booking_uid || 'Not mapped (Local Mock)'}</code></div>
               </div>
               <div className="relative pl-6 border-l-2 border-primary/20 space-y-4">
                 <div className="relative">
@@ -8827,95 +9126,125 @@ export default function App() {
         </div>
       )}
 
-      {/* FLOATING MCP AI ASSISTANT POPUP BUTTON & MODAL */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-auto">
+      {/* FLOATING SERENE TOUCH SPA AI ASSISTANT POPUP BUTTON & MODAL */}
+      <div className="fixed bottom-7 right-7 z-50 flex flex-col items-end gap-3 pointer-events-auto">
         {!showMcpModal && (
           <button
             onClick={() => setShowMcpModal(true)}
-            className="flex items-center gap-3 bg-gradient-to-r from-primary via-[#248080] to-tertiary text-white px-5 py-3.5 rounded-full shadow-[0_10px_30px_rgba(27,102,102,0.4)] hover:shadow-[0_15px_35px_rgba(27,102,102,0.6)] hover:scale-105 transition-all cursor-pointer font-bold border border-white/20 group"
+            title="Chat with SERENE TOUCH SPA AI Receptionist"
+            aria-label="Open SERENE TOUCH SPA AI Assistant"
+            className="w-[84px] h-[84px] rounded-[26px] bg-gradient-to-br from-[#14271f] via-[#1f3a2f] to-[#14271f] text-[#d8b875] border-2 border-[#d8b875]/70 hover:border-[#d8b875] shadow-[0_16px_40px_rgba(15,28,22,0.55),0_0_25px_rgba(216,184,117,0.3)] hover:shadow-[0_22px_50px_rgba(15,28,22,0.7),0_0_35px_rgba(216,184,117,0.5)] hover:-translate-y-1 hover:scale-105 transition-all cursor-pointer flex items-center justify-center p-0 relative group"
           >
-            <span className="material-symbols-outlined text-[22px] group-hover:rotate-12 transition-transform">smart_toy</span>
-            <span className="text-sm font-bold tracking-wide">Cal.com AI Assistant</span>
-            <span className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping"></span>
+            <div className="relative w-[52px] h-[52px] flex items-center justify-center">
+              <img src="/S_icon.svg" alt="SERENA TOUCH" className="w-full h-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
+              <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-[#14271f] border-2 border-[#d8b875] flex items-center justify-center">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping"></span>
+              </span>
+            </div>
           </button>
         )}
 
+        {/* [BRAND: SERENA_TOUCH] Floating AI Chat Modal (Full-screen on mobile phones, 30vw on desktop, transparent window over picture background) */}
         {showMcpModal && (
-          <div className="w-[92vw] sm:w-[460px] h-[580px] max-h-[85vh] bg-surface-container-lowest/95 backdrop-blur-xl border border-surface-variant/40 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.35)] flex flex-col overflow-hidden animate-fade-in text-on-surface">
+          <div 
+            className="max-md:fixed max-md:inset-0 max-md:w-screen max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:rounded-none max-md:border-0 max-md:z-[200] md:w-[440px] lg:w-[30vw] lg:min-w-[390px] lg:max-w-[30vw] md:h-[620px] lg:h-[78vh] md:max-h-[85vh] backdrop-blur-xl border border-[#d8b875]/55 rounded-3xl shadow-[0_25px_60px_rgba(0,0,0,0.65),0_0_35px_rgba(216,184,117,0.22)] flex flex-col overflow-hidden animate-fade-in text-[#f7f4ee]"
+            style={{
+              backgroundImage: 'linear-gradient(145deg, rgba(20, 39, 31, 0.74) 0%, rgba(15, 28, 22, 0.82) 100%), url(/spa-bg.jpg)',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center'
+            }}
+          >
             {/* Header */}
-            <div className="bg-gradient-to-r from-primary via-[#248080] to-tertiary text-white p-4 flex items-center justify-between shadow-md">
+            <div className="bg-[#0f1c16]/65 backdrop-blur-md text-white px-5 py-4 flex items-center justify-between shadow-md border-b border-[#d8b875]/35">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30">
-                  <span className="material-symbols-outlined text-[20px]">smart_toy</span>
+                <div className="w-[44px] h-[44px] rounded-xl bg-[#14271f] border border-[#d8b875]/65 flex items-center justify-center shadow-md p-0.5 shrink-0">
+                  <img src="/S_icon.svg" alt="S" className="w-full h-full object-contain" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-sm leading-tight flex items-center gap-1.5">
-                    {currentUserRole === 'receptionist' ? 'SPA AI Receptionist' : 'Cal.com AI Companion Agent'}
-                    <span className="text-[9px] bg-emerald-500/30 border border-emerald-300/40 text-emerald-200 px-1.5 py-0.5 rounded font-extrabold uppercase">Live API</span>
+                  <h3 className="font-bold text-[17px] leading-tight flex items-center gap-2 font-serif text-[#d8b875] tracking-wide">
+                    SERENE TOUCH SPA AI
+                    <span className="text-[10.5px] bg-[#d8b875]/20 border border-[#d8b875]/60 text-[#d8b875] px-2 py-0.5 rounded-full font-extrabold uppercase tracking-wider font-sans">AI Agent</span>
                   </h3>
-                  <p className="text-[10px] text-white/80">{currentUserRole === 'receptionist' ? 'Cal.diy Interactive Assistant' : 'Self-Hosted Cal.diy Interactive Assistant'}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]"></span>
+                    <p className="text-[12.5px] text-[#f7f4ee]/90 font-medium">SPA AI Receptionist • Live Availability</p>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setMcpMessages([{ id: '1', role: 'assistant', content: 'Hello! I can check availability and book appointments for your specialists. Just ask!' }])}
-                  title="Clear Chat History"
-                  className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  onClick={() => {
+                    const resetMsg = [{ id: '1', role: 'assistant', content: 'Hello! I am your Serene Touch SPA AI Receptionist. I can check specialist availability and book appointments. How may I assist you today?' }];
+                    setMcpMessages(resetMsg);
+                    try { sessionStorage.removeItem('serena_touch_staff_chat_v1'); } catch (_) {}
+                  }}
+                  title="Delete Chat History"
+                  aria-label="Delete Chat History"
+                  className="w-9 h-9 bg-white/10 border border-[#d8b875]/35 text-[#f7f4ee] hover:text-red-300 hover:border-red-400 hover:bg-red-500/20 rounded-full flex items-center justify-center transition-all cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-[18px]">delete</span>
+                  <span className="material-symbols-outlined text-[19px]">delete</span>
                 </button>
                 <button
-                  onClick={() => setCurrentView('mcp')}
+                  onClick={() => { setShowMcpModal(false); setCurrentView('mcp'); }}
                   title="Expand to Full View"
-                  className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  aria-label="Expand to Full View"
+                  className="max-md:hidden w-9 h-9 bg-white/10 border border-[#d8b875]/35 text-[#f7f4ee] hover:text-[#d8b875] hover:border-[#d8b875] hover:bg-white/15 rounded-full flex items-center justify-center transition-all cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-[18px]">open_in_full</span>
+                  <span className="material-symbols-outlined text-[19px]">open_in_full</span>
                 </button>
                 <button
                   onClick={() => setShowMcpModal(false)}
-                  className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  title="Close chat and return to page"
+                  aria-label="Close chat"
+                  className="w-9 h-9 bg-white/10 border border-[#d8b875]/35 text-[#f7f4ee] hover:text-[#d8b875] hover:border-[#d8b875] hover:bg-[#d8b875]/25 rounded-full flex items-center justify-center transition-all cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-[18px]">close</span>
+                  <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
               </div>
             </div>
 
-            {/* Chat Body */}
-            <div className="flex-1 p-4 overflow-y-auto space-y-3.5 bg-surface-container-low/20">
+            {/* Floating Notice Banner (Matches www.calcom.run.place) */}
+            <div className="bg-[#d8b875]/14 backdrop-blur-md border-b border-[#d8b875]/30 px-4 py-2.5 text-[13.5px] leading-snug text-[#f7f4ee] flex items-center gap-2.5">
+              <span className="text-base">🌿</span>
+              <span>You are speaking with our autonomous <strong>SPA AI Receptionist</strong>. Inquire about therapies, check real-time openings, and book your appointment instantly.</span>
+            </div>
+
+            {/* Transparent Chat Body - Elderly Friendly High Legibility */}
+            <div className="flex-1 p-4 sm:p-5 overflow-y-auto space-y-4 bg-transparent">
               {mcpMessages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center p-5 text-on-surface-variant">
-                  <span className="material-symbols-outlined text-4xl text-primary/60 mb-2">chat_spark</span>
-                  <p className="text-xs font-bold text-on-surface mb-1">How can I assist your spa scheduling today?</p>
-                  <p className="text-[11px] max-w-xs leading-relaxed opacity-80 mb-4">
-                    Click any quick example question below or type your custom request:
+                <div className="h-full flex flex-col items-center justify-center text-center p-5 text-[#f7f4ee]">
+                  <img src="/S_icon.svg" alt="S" className="w-12 h-12 mb-3 rounded-xl shadow-md" />
+                  <p className="text-base font-bold text-[#d8b875] mb-1 font-serif">Serene Touch SPA Receptionist</p>
+                  <p className="text-sm max-w-xs leading-relaxed opacity-90 mb-4">
+                    Click any quick action below or type your scheduling question:
                   </p>
-                  <div className="flex flex-col gap-1.5 w-full max-w-xs text-left">
+                  <div className="flex flex-col gap-2 w-full max-w-xs text-left">
                     <button
                       onClick={() => handleMcpSubmit('massage with anna tomorrow at 12:00')}
-                      className="text-[11px] bg-surface-container-lowest hover:bg-primary/10 hover:text-primary text-on-surface font-medium p-2 rounded-xl border border-surface-variant/40 transition-all flex items-center gap-2 shadow-sm"
+                      className="text-sm bg-[#14271f]/55 hover:bg-[#d8b875]/25 text-[#f7f4ee] font-medium p-3 rounded-xl border border-[#d8b875]/40 transition-all flex items-center gap-2 shadow-sm backdrop-blur-md cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[14px] text-primary">event_available</span>
+                      <span className="material-symbols-outlined text-[16px] text-[#d8b875]">event_available</span>
                       "massage with anna tomorrow at 12:00"
                     </button>
                     <button
                       onClick={() => handleMcpSubmit('massage tomorrow 14:00')}
-                      className="text-[11px] bg-surface-container-lowest hover:bg-primary/10 hover:text-primary text-on-surface font-medium p-2 rounded-xl border border-surface-variant/40 transition-all flex items-center gap-2 shadow-sm"
+                      className="text-sm bg-[#14271f]/55 hover:bg-[#d8b875]/25 text-[#f7f4ee] font-medium p-3 rounded-xl border border-[#d8b875]/40 transition-all flex items-center gap-2 shadow-sm backdrop-blur-md cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[14px] text-primary">schedule</span>
+                      <span className="material-symbols-outlined text-[16px] text-[#d8b875]">schedule</span>
                       "massage tomorrow 14:00"
                     </button>
                     <button
-                      onClick={() => handleMcpSubmit('availability for melvin tomorrow')}
-                      className="text-[11px] bg-surface-container-lowest hover:bg-primary/10 hover:text-primary text-on-surface font-medium p-2 rounded-xl border border-surface-variant/40 transition-all flex items-center gap-2 shadow-sm"
+                      onClick={() => handleMcpSubmit('availability for erik tomorrow')}
+                      className="text-sm bg-[#14271f]/55 hover:bg-[#d8b875]/25 text-[#f7f4ee] font-medium p-3 rounded-xl border border-[#d8b875]/40 transition-all flex items-center gap-2 shadow-sm backdrop-blur-md cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[14px] text-primary">person_search</span>
-                      "availability for melvin tomorrow"
+                      <span className="material-symbols-outlined text-[16px] text-[#d8b875]">person_search</span>
+                      "availability for erik tomorrow"
                     </button>
                     <button
                       onClick={() => handleMcpSubmit('show bookings')}
-                      className="text-[11px] bg-surface-container-lowest hover:bg-primary/10 hover:text-primary text-on-surface font-medium p-2 rounded-xl border border-surface-variant/40 transition-all flex items-center gap-2 shadow-sm"
+                      className="text-sm bg-[#14271f]/55 hover:bg-[#d8b875]/25 text-[#f7f4ee] font-medium p-3 rounded-xl border border-[#d8b875]/40 transition-all flex items-center gap-2 shadow-sm backdrop-blur-md cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[14px] text-primary">format_list_bulleted</span>
+                      <span className="material-symbols-outlined text-[16px] text-[#d8b875]">format_list_bulleted</span>
                       "show bookings"
                     </button>
                   </div>
@@ -8927,22 +9256,23 @@ export default function App() {
                     className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[85%] rounded-2xl p-3 text-xs leading-relaxed shadow-sm ${
+                      className={`max-w-[88%] rounded-2xl px-4 py-3.5 text-[16.5px] leading-[1.65] shadow-md ${
                         msg.role === 'user'
-                          ? 'bg-primary text-white rounded-br-none'
-                          : 'bg-surface-container-lowest text-on-surface border border-surface-variant/40 rounded-bl-none'
+                          ? 'bg-gradient-to-r from-[#d8b875] to-[#c9a863] text-[#14271f] font-semibold rounded-br-xs'
+                          : 'bg-[#14271f]/58 backdrop-blur-md text-white border border-[#d8b875]/42 border-l-4 border-l-[#d8b875] rounded-bl-xs'
                       }`}
                     >
                       {msg.role === 'assistant' && (
-                        <div className="flex items-center gap-1 mb-1 font-bold text-[10px] text-primary uppercase tracking-wider">
-                          <span className="material-symbols-outlined text-[13px]">smart_toy</span>
-                          Cal.com Agent
+                        <div className="flex items-center gap-2 mb-1.5 font-bold text-xs text-[#d8b875] uppercase tracking-wider">
+                          <img src="/S_icon.svg" className="w-4 h-4 rounded object-contain" alt="" />
+                          <span className="font-serif text-[13.5px]">Serene Touch SPA</span>
+                          <span className="text-[10px] bg-[#d8b875]/25 text-[#d8b875] px-1.5 py-0.5 rounded font-extrabold">AI Agent</span>
                         </div>
                       )}
                       
-                        <div>{msg.content}</div>
+                        <div className="font-medium">{msg.content}</div>
                         {msg.toolInvocations && msg.toolInvocations.map((tool: any, i: number) => (
-                          <div key={i} className="mt-2 text-[10px] bg-primary/10 text-primary px-2 py-1 rounded-md border border-primary/20">
+                          <div key={i} className="mt-2 text-xs bg-[#14271f]/65 text-[#d8b875] px-2.5 py-1.5 rounded-md border border-[#d8b875]/35">
                             {tool.state === 'result' ? `✅ Finished: ${tool.toolName}` : `⚙️ Running: ${tool.toolName}...`}
                           </div>
                         ))}
@@ -8958,7 +9288,7 @@ export default function App() {
                                 config: { layout: 'month_view', theme: 'light' }
                               });
                             }}
-                            className="bg-primary text-white font-bold px-5 py-3 rounded-xl shadow-lg hover:bg-primary/90 flex items-center gap-2 transition-all transform hover:scale-105"
+                            className="spa-btn-gold font-bold px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 transition-all transform hover:scale-105 cursor-pointer"
                           >
                             <span className="material-symbols-outlined text-[20px]">event_available</span>
                             Complete Booking
@@ -8971,10 +9301,10 @@ export default function App() {
                             <button
                               key={aIdx}
                               onClick={() => handleMcpSubmit(act.payload)}
-                              className={`text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-colors border shadow-sm flex items-center justify-center ${
+                              className={`text-sm font-semibold px-3.5 py-2 rounded-lg transition-colors border shadow-sm flex items-center justify-center cursor-pointer ${
                                 act.label === 'Cancel Booking'
-                                  ? 'bg-red-500/10 text-red-600 border-red-500/30 hover:bg-red-500/20'
-                                  : 'bg-surface-base text-primary border-primary/30 hover:bg-primary hover:text-white'
+                                  ? 'bg-red-500/20 text-red-200 border-red-400/40 hover:bg-red-500/30'
+                                  : 'spa-btn-gold'
                               }`}
                             >
                               {act.label}
@@ -8988,23 +9318,23 @@ export default function App() {
               )}
               {/* Follow-up Suggestion Chips after responses */}
               {mcpMessages.length > 0 && !mcpLoading && (
-                <div className="pt-2 border-t border-surface-variant/20 flex flex-wrap gap-1.5">
-                  <span className="text-[10px] text-outline font-semibold w-full">Suggested follow-ups:</span>
+                <div className="pt-2.5 border-t border-[#d8b875]/25 flex flex-wrap gap-2">
+                  <span className="text-xs text-[#d8b875] font-semibold w-full">Suggested follow-ups:</span>
                   <button
                     onClick={() => handleMcpSubmit('massage with anna tomorrow at 12:00')}
-                    className="text-[10px] bg-surface-container-lowest hover:bg-primary/10 hover:text-primary text-on-surface-variant py-1 px-2.5 rounded-full border border-surface-variant/40 transition-colors shadow-2xs"
+                    className="text-xs bg-[#14271f]/55 hover:bg-[#d8b875]/25 text-[#f7f4ee] py-1.5 px-3 rounded-full border border-[#d8b875]/40 transition-colors shadow-2xs cursor-pointer"
                   >
                     "massage with anna tomorrow at 12:00"
                   </button>
                   <button
                     onClick={() => handleMcpSubmit('massage tomorrow 14:00')}
-                    className="text-[10px] bg-surface-container-lowest hover:bg-primary/10 hover:text-primary text-on-surface-variant py-1 px-2.5 rounded-full border border-surface-variant/40 transition-colors shadow-2xs"
+                    className="text-xs bg-[#14271f]/55 hover:bg-[#d8b875]/25 text-[#f7f4ee] py-1.5 px-3 rounded-full border border-[#d8b875]/40 transition-colors shadow-2xs cursor-pointer"
                   >
                     "massage tomorrow 14:00"
                   </button>
                   <button
                     onClick={() => handleMcpSubmit('show bookings')}
-                    className="text-[10px] bg-surface-container-lowest hover:bg-primary/10 hover:text-primary text-on-surface-variant py-1 px-2.5 rounded-full border border-surface-variant/40 transition-colors shadow-2xs"
+                    className="text-xs bg-[#14271f]/55 hover:bg-[#d8b875]/25 text-[#f7f4ee] py-1.5 px-3 rounded-full border border-[#d8b875]/40 transition-colors shadow-2xs cursor-pointer"
                   >
                     "show bookings"
                   </button>
@@ -9012,30 +9342,30 @@ export default function App() {
               )}
               {mcpLoading && (
                 <div className="flex justify-start">
-                  <div className="bg-surface-container-lowest border border-surface-variant/40 p-3 rounded-2xl rounded-bl-none text-xs text-on-surface-variant flex items-center gap-2">
-                    <span className="w-2 h-2 bg-primary rounded-full animate-ping"></span>
-                    <span>Querying Cal.com Live API...</span>
+                  <div className="bg-[#14271f]/55 backdrop-blur-md border border-[#d8b875]/40 p-3.5 rounded-2xl rounded-bl-none text-sm text-[#d8b875] flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 bg-[#d8b875] rounded-full animate-ping"></span>
+                    <span>Serene Touch SPA AI is checking live schedule...</span>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Input Bar */}
-            <div className="p-3 bg-surface-container-lowest border-t border-surface-variant/30 flex items-center gap-2">
+            {/* Transparent Input Bar */}
+            <div className="p-3.5 bg-[#0f1c16]/50 backdrop-blur-md border-t border-[#d8b875]/35 flex items-center gap-2.5">
               <input
                 type="text"
                 value={mcpInput}
                 onChange={handleMcpInputChange}
                 onKeyDown={e => e.key === 'Enter' && handleMcpSubmit()}
-                placeholder="Ask Cal.com AI (e.g. 'book with anna tomorrow at 14:00')..."
-                className="flex-1 bg-surface-muted rounded-full px-4 py-2 text-xs outline-none border border-surface-variant/50 focus:border-primary text-on-surface"
+                placeholder="Ask Serene Touch SPA AI (e.g. 'book with anna tomorrow at 14:00')..."
+                className="flex-1 bg-[#14271f]/40 rounded-full px-4 py-2.5 text-base font-medium outline-none border border-[#d8b875]/45 focus:border-[#d8b875] text-white placeholder-[#f7f4ee]/65"
               />
               <button
                 onClick={() => handleMcpSubmit()}
                 disabled={!mcpInput.trim() || mcpLoading}
-                className="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center hover:opacity-90 transition-opacity disabled:opacity-40 cursor-pointer shadow-sm shrink-0"
+                className="w-11 h-11 rounded-full spa-btn-gold flex items-center justify-center hover:opacity-90 transition-opacity disabled:opacity-40 cursor-pointer shadow-sm shrink-0"
               >
-                <span className="material-symbols-outlined text-[18px]">send</span>
+                <span className="material-symbols-outlined text-[20px]">send</span>
               </button>
             </div>
           </div>
@@ -9045,10 +9375,10 @@ export default function App() {
       {/* ADMIN PIN MODAL */}
       {showAdminPinModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-surface-base w-full max-w-sm rounded-2xl border border-surface-variant shadow-2xl p-6 text-center">
-            <span className="material-symbols-outlined text-[48px] text-primary mb-4 block">admin_panel_settings</span>
-            <h3 className="text-headline-sm font-bold text-on-surface mb-2">Admin Authentication</h3>
-            <p className="text-body-sm text-on-surface-variant mb-6">Enter PIN to access administrative features.</p>
+          <div className="spa-picture-modal w-full max-w-sm rounded-2xl p-6 text-center">
+            <span className="material-symbols-outlined text-[48px] text-[#d8b875] mb-4 block">admin_panel_settings</span>
+            <h3 className="font-serif text-xl font-bold text-[#d8b875] mb-2">Admin Authentication</h3>
+            <p className="text-body-sm text-[#f7f4ee]/80 mb-6">Enter PIN to access administrative features.</p>
             
             <input 
               type="password"
@@ -9068,14 +9398,14 @@ export default function App() {
                   }
                 }
               }}
-              className="w-full bg-sand-light border-transparent focus:bg-surface-base focus:border-primary text-center text-xl tracking-[0.5em] font-mono rounded-xl py-3 px-4 outline-none transition-colors shadow-inner text-on-surface mb-4"
+              className="w-full text-center text-xl tracking-[0.5em] font-mono rounded-xl py-3 px-4 outline-none transition-colors shadow-inner mb-4"
               autoFocus
             />
             
             <div className="flex gap-3">
               <button 
                 onClick={() => { setShowAdminPinModal(false); setAdminPinInput(''); }}
-                className="flex-1 bg-surface-container text-on-surface font-bold py-2.5 rounded-lg hover:bg-surface-variant transition-colors"
+                className="flex-1 spa-btn-secondary font-bold py-2.5 rounded-lg transition-colors cursor-pointer"
               >
                 Cancel
               </button>
@@ -9091,7 +9421,7 @@ export default function App() {
                     triggerNotification('Incorrect PIN');
                   }
                 }}
-                className="flex-1 bg-primary text-white font-bold py-2.5 rounded-lg hover:opacity-90 transition-colors shadow-sm"
+                className="flex-1 spa-btn-gold font-bold py-2.5 rounded-lg transition-colors shadow-sm cursor-pointer"
               >
                 Unlock
               </button>
@@ -9100,7 +9430,7 @@ export default function App() {
         </div>
       )}
 
-      {/* BOOKING PAGES MODAL — Cal.com embed for all linked users */}
+      {/* BOOKING PAGES MODAL — Embedded calendars for all linked users */}
       {showBookingPagesModal && (() => {
         // Build de-duped user list: calOrgUsers merged with specialists that have calUsername
         const allEmbedUsers: Array<{ username: string; displayName: string }> = [];
@@ -9115,7 +9445,7 @@ export default function App() {
           }
         });
 
-        // From specialists with linked Cal.com username
+        // From specialists with linked username
         specialists.forEach((s: any) => {
           const uname = (s.calUsername || '').trim().toLowerCase();
           if (uname && !seenUsernames.has(uname)) {
@@ -9124,7 +9454,7 @@ export default function App() {
           }
         });
 
-        // Extract Cal.com base origin from configured endpoint
+        // Extract base origin from configured endpoint
         const calOrigin = (() => {
           try {
             const raw = calComApiEndpoint.trim().replace(/\/+$/, '');
@@ -9134,63 +9464,63 @@ export default function App() {
 
         return (
           <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-fade-in">
-            <div className="bg-surface-base w-full max-w-5xl max-h-[92vh] rounded-2xl border border-surface-variant shadow-2xl overflow-hidden flex flex-col">
+            <div className="spa-picture-modal w-full max-w-5xl max-h-[92vh] rounded-2xl overflow-hidden flex flex-col">
               {/* Header */}
-              <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-primary via-[#248080] to-tertiary text-white">
+              <div className="modal-header flex items-center justify-between px-6 py-4 text-[#d8b875]">
                 <div className="flex items-center gap-3">
-                  <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: '"FILL" 1' }}>calendar_month</span>
+                  <img src="/S_icon.svg" className="w-8 h-8 rounded-lg shadow-sm" alt="S" />
                   <div>
-                    <h2 className="font-bold text-lg tracking-wide">Specialist Booking Pages</h2>
-                    <p className="text-white/70 text-xs">{allEmbedUsers.length} specialist(s) — live Cal.com embedded calendars</p>
+                    <h2 className="font-serif font-bold text-lg tracking-wide text-[#d8b875]">Specialist Booking Pages</h2>
+                    <p className="text-[#f7f4ee]/80 text-xs">{allEmbedUsers.length} specialist(s) — live embedded reservation calendars</p>
                   </div>
                 </div>
                 <button
                   onClick={() => setShowBookingPagesModal(false)}
-                  className="w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors cursor-pointer"
+                  className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-[#d8b875] flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <span className="material-symbols-outlined">close</span>
                 </button>
               </div>
 
               {/* Scrollable body */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-surface-muted">
+              <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-transparent">
                 {allEmbedUsers.length === 0 ? (
                   <div className="flex flex-col items-center justify-center min-h-[300px] text-center">
-                    <span className="material-symbols-outlined text-[64px] text-on-surface-variant/30 mb-4">person_off</span>
-                    <h3 className="font-bold text-on-surface text-lg mb-2">No Linked Users</h3>
-                    <p className="text-on-surface-variant text-sm max-w-md">Add Cal.com usernames to your specialists in Settings → CAL.DIY MANAGER, then try again.</p>
+                    <span className="material-symbols-outlined text-[64px] text-[#d8b875]/40 mb-4">person_off</span>
+                    <h3 className="font-bold text-[#d8b875] text-lg mb-2 font-serif">No Linked Users</h3>
+                    <p className="text-[#f7f4ee]/80 text-sm max-w-md">Add specialist profiles in Settings → SPECIALISTS MANAGER, then try again.</p>
                     <button
                       onClick={() => { setShowBookingPagesModal(false); setCurrentView('settings'); setSettingsTab('specialists_manager'); }}
-                      className="mt-4 bg-primary text-white px-6 py-2.5 rounded-lg font-bold text-sm hover:opacity-90 transition-all"
+                      className="mt-4 spa-btn-gold px-6 py-2.5 rounded-lg font-bold text-sm shadow-md transition-all cursor-pointer"
                     >
-                      Open CAL.DIY MANAGER
+                      Open SPECIALISTS MANAGER
                     </button>
                   </div>
                 ) : (
                   allEmbedUsers.map(({ username, displayName }) => (
-                    <div key={username} className="bg-surface-base rounded-xl border border-surface-variant shadow-sm overflow-hidden">
+                    <div key={username} className="bg-[#14271f]/55 backdrop-blur-md rounded-xl border border-[#d8b875]/35 shadow-lg overflow-hidden">
                       {/* User header */}
-                      <div className="flex items-center justify-between px-5 py-3.5 bg-surface-container border-b border-surface-variant">
+                      <div className="flex items-center justify-between px-5 py-3.5 bg-[#0f1c16]/60 border-b border-[#d8b875]/30">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-primary text-sm">
+                          <div className="w-9 h-9 rounded-full bg-[#d8b875]/20 border border-[#d8b875]/40 flex items-center justify-center font-bold text-[#d8b875] text-sm">
                             {displayName.charAt(0).toUpperCase()}
                           </div>
                           <div>
-                            <div className="font-bold text-on-surface capitalize">{displayName}</div>
-                            <div className="text-[11px] text-on-surface-variant font-mono">{calOrigin}/{username}</div>
+                            <div className="font-bold text-[#f7f4ee] capitalize">{displayName}</div>
+                            <div className="text-[11px] text-[#d8b875]/80 font-mono">{calOrigin}/{username}</div>
                           </div>
                         </div>
                         <a
                           href={`${calOrigin}/${username}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="flex items-center gap-1.5 text-primary hover:underline text-xs font-semibold"
+                          className="flex items-center gap-1.5 text-[#d8b875] hover:underline text-xs font-semibold"
                         >
                           <span className="material-symbols-outlined text-[14px]">open_in_new</span>
                           Open Full Page
                         </a>
                       </div>
-                      {/* Cal.com embedded calendar iframe */}
+                      {/* Embedded calendar iframe */}
                       <div className="p-4">
                         <iframe
                           src={`${calOrigin}/${username}?embed=true&layout=month_view&hideEventTypeDetails=false`}
@@ -9198,7 +9528,7 @@ export default function App() {
                           height="600"
                           frameBorder="0"
                           title={`${displayName} Booking Calendar`}
-                          className="rounded-lg border border-surface-variant/50 bg-white"
+                          className="rounded-lg border border-[#d8b875]/30 bg-white"
                           style={{ minHeight: 550 }}
                         />
                       </div>

@@ -23,7 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 
-# Sensitive files
+# Sensitive files & Environment Keys
 .env
 server/.env
 api_test*.json
@@ -31,7 +31,47 @@ bookings_debug.json
 true_bookings.json
 event_types.json
 
-# Scratch pad
+# Scratch pad & archives
 scratch/
-
 out.js
+*.tgz
+*.tar.gz
+*.zip
+
+# Private Architecture, Skills, VPS Setup & Reproduction Blueprints (Kept Locally Only)
+AUTONOMOUS-SPA-ECOSYSTEM-AND-SEO-100.md
+CONTABO-VPS-PRIVATE-MAP.md
+*.private.md
+private/
+.gemini/
+.agents/
+deploy/
+docs/
+mermaid-diagram*.svg
+bulk_import_events.cjs
+remove_specialist_status.cjs
+remove_specialist_status.js
+remove_webhooks.cjs
+src/patch_exact_et.py
+server/bulk_import_events.js
+server/fix_classic_facials.js
+server/fix_event_types.js
+server/fix_titles.js
+server/schema.json
+server/specialists.json
+server/test_chat.js
+server/test_multi.js
+server/test_schema.js
+server/test_zod.js
+
+# Local Debug Screenshots
+Screenshot*.png
+be1.png
+bn2.png
+bn3.png
+bn_notification.png
+bn_therapist_menu.png
+clientIDlongcode.png
+create1.png
+create2.png
+logout.png

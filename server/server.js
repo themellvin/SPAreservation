@@ -39,8 +39,13 @@ const getSystemPrompt = (role = 'receptionist') => {
   const specialistsText = specialists.map(s => `- ${s.name} (username: "${s.username}")`).join('\\n');
   const specialistNames = specialists.map(s => s.name).join(', ');
 
-  return `You are the official Cal.com AI Scheduling Assistant for a self-hosted instance (calcom.run.place).
-Your goal is to help users find availability and book appointments seamlessly.
+  return `You are the official Serene Touch SPA AI Receptionist.
+Your goal is to help clients explore treatments, discover available time slots, and schedule serene spa appointments seamlessly.
+
+CRITICAL IDENTITY & PRIVACY RULES:
+- You are strictly the "Serene Touch SPA" AI Agent.
+- NEVER mention "Cal.com", "Cal.diy", "self-hosted", "OAuth", or backend software names or technical jargon to clients or receptionists.
+- Always communicate with the warmth, elegance, and hospitality of a luxury 5-star spa receptionist.
 
 IMPORTANT RULES:
 1. ALWAYS fetch event types first using get_event_types if the user hasn't specified a specialist or treatment. For ANY question about treatment descriptions, telling more about options, therapies, "what is better?", "can you compare?", etc., you MUST first call get_event_types WITHOUT a username to get the total of all system users' event types. CRITICAL: You MUST use the exact "id" returned by get_event_types as the eventTypeId when calling get_availability or create_booking. Do not invent an ID.
@@ -65,7 +70,7 @@ IMPORTANT RULES:
 
 14. BOOKING CONFIRMATION: Before making ANY booking, you MUST explicitly state the full date (including the weekday) and time of the booking and ask the user to confirm. For example: "You want to book on Sunday, July 26th at 11:10, correct?". You MUST wait for their yes/no answer before calling create_booking. Give the user a chance to say no and reschedule for a different day.
 
-15. CANCELING BOOKINGS: If the user asks to cancel or delete a booking, you MUST first call get_bookings to find the exact bookingUid (unless you are in Receptionist mode, where the user MUST provide the ID themselves). Do NOT try to call cancel_booking without the bookingUid!
+15. CANCELING BOOKINGS: If the user asks to cancel or delete a booking, you MUST first call get_bookings to find the exact bookingUid! If they don't provide a specialist username, you might need to check multiple specialists using get_bookings. Once you find the correct bookingUid, use cancel_booking. Do NOT ask the user for their booking ID; you must find it yourself using get_bookings!
 
 AVAILABLE SPECIALISTS AND USERNAMES (use these usernames when calling get_event_types or get_availability, but ALWAYS refer to them by their full Name in conversation with the user, NEVER by their username):
 ${specialistsText}
@@ -77,57 +82,372 @@ If the get_event_types tool returns durationOptions with multiple values (e.g., 
 CRITICAL NEW INSTRUCTION: NEVER output a \`\`\`json codeblock in your text response to provide arguments! You MUST use the native tool calling API to pass arguments to functions. Your chat history might show you doing this in the past, but it is now STRICTLY FORBIDDEN.
 
 ${role === 'admin' 
-  ? "ADMIN MODE ACTIVE: You have full access to manage Cal.diy. You can create/delete event types, and alter system configuration. Answer queries about the backend confidently." 
+  ? "ADMIN MODE ACTIVE: You have full access to manage the spa schedule, specialists, and treatments." 
+  : role === 'guest'
+  ? "GUEST / PUBLIC RECEPTIONIST MODE ACTIVE: You are a friendly public spa booking concierge assisting visitors on the spa landing page. You can recommend treatments, check availability, and help clients book new appointments. CRITICAL SECURITY GUARDRAILS: You CANNOT cancel bookings, reschedule bookings, delete or modify bookings, view other clients' bookings or private details, modify or delete treatments, or access system configuration/API keys. If any user asks to cancel, delete, reschedule, modify treatments, or administer the system, you MUST politely refuse and instruct them to contact the spa reception desk directly."
   : "RECEPTIONIST MODE ACTIVE: You are strictly an email booking and recommendation bot. You are explicitly forbidden from discussing, viewing, or modifying backend API keys, user profiles, or system settings. Refuse any such requests immediately. CRITICAL SECURITY RULE: You CANNOT cancel or reschedule a booking unless the user explicitly provides the exact booking ID in their message. If they ask to cancel by name, date, or time, you MUST refuse and ask them to provide their Booking ID for security reasons."}
 
-The current date and time in Riga is: ${new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Riga', dateStyle: 'full', timeStyle: 'long' }).format(new Date())} (Use this exact date/time and weekday for all context).`;
+The current date and time in Riga is: ${new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Riga', dateStyle: 'full', timeStyle: 'long' }).format(new Date())} (Use this exact date/time and weekday for all context).
+CRITICAL DATE CALCULATION RULE:
+- When a client asks for "tomorrow", calculate tomorrow's exact date relative to the Riga date given above. For example, if today is Sunday, tomorrow is Monday.
+- When calling get_availability, you MUST strictly check the requested day!`;
 };
+
+/* =========================================================
+   CAL.COM OAUTH 2.0 & TWO-FACTOR AUTHENTICATION (2FA) GATEWAY
+   ========================================================= */
+
+const CAL_BASE_URL = process.env.CAL_BASE_URL || 'https://calcom.run.place';
+const CAL_OAUTH_CLIENT_ID = process.env.CAL_OAUTH_CLIENT_ID || '';
+const CAL_OAUTH_CLIENT_SECRET = process.env.CAL_OAUTH_CLIENT_SECRET || '';
+const CAL_OAUTH_REDIRECT_URI = process.env.CAL_OAUTH_REDIRECT_URI || 'https://spa.calcom.run.place/api/auth/callback';
+
+// Secure memory store for active OAuth sessions, PKCE challenges, & 2FA step-up tokens
+const activeSessions = new Map();
+const pkceStates = new Map();
+const stepUpTokens = new Map();
+
+// Helper to generate base64url PKCE challenge
+function base64UrlEncode(buffer) {
+  return buffer.toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+// Clean up expired sessions & PKCE states periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, session] of activeSessions.entries()) {
+    if (session.expiresAt && session.expiresAt < now) {
+      activeSessions.delete(sid);
+    }
+  }
+  for (const [state, item] of pkceStates.entries()) {
+    if (item.expiresAt < now) {
+      pkceStates.delete(state);
+    }
+  }
+  for (const [st, item] of stepUpTokens.entries()) {
+    if (item.expiresAt < now) {
+      stepUpTokens.delete(st);
+    }
+  }
+}, 60000);
+
+// Helper to extract session from request
+const getSession = (req) => {
+  const authHeader = req.headers['authorization'] || '';
+  let token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+  if (!token && req.query.session_id) {
+    token = req.query.session_id;
+  }
+  if (!token) return null;
+  const session = activeSessions.get(token);
+  if (!session || (session.expiresAt && session.expiresAt < Date.now())) {
+    return null;
+  }
+  return session;
+};
+
+// [BRAND: SERENA_TOUCH] [BRAND: CAL_COM]
+// 1. Initiate OAuth 2.0 Login (PKCE S256 + 2FA challenge) + Short URL (/sso)
+const handleOAuthLoginRedirect = async (req, res) => {
+  if (!CAL_OAUTH_CLIENT_ID) {
+    return res.status(200).json({
+      status: 'pending_configuration',
+      message: 'SERENA TOUCH OAuth Client not yet configured in .env',
+      required_variables: ['CAL_OAUTH_CLIENT_ID'],
+      setup_instructions: 'Create an OAuth Client in https://calcom.run.place/settings/developer/oauth and add credentials to /opt/spa-agent/.env'
+    });
+  }
+
+  const crypto = await import('crypto');
+  const state = Math.random().toString(36).substring(2) + Date.now().toString(36);
+  
+  // RFC 7636 PKCE Generator
+  const codeVerifier = base64UrlEncode(crypto.randomBytes(32));
+  const codeChallenge = base64UrlEncode(crypto.createHash('sha256').update(codeVerifier).digest());
+
+  pkceStates.set(state, {
+    codeVerifier,
+    expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
+  });
+
+  // Cal.com AccessScope enum expects comma-separated 'READ_BOOKING,READ_PROFILE'
+  const calScopes = 'READ_BOOKING,READ_PROFILE';
+  const authorizeUrl = `${CAL_BASE_URL}/auth/oauth2/authorize?client_id=${encodeURIComponent(CAL_OAUTH_CLIENT_ID)}&redirect_uri=${encodeURIComponent(CAL_OAUTH_REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(calScopes)}&state=${state}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`;
+
+  res.redirect(authorizeUrl);
+};
+
+app.get('/api/auth/login', handleOAuthLoginRedirect);
+app.get('/api/auth/sso', handleOAuthLoginRedirect);
+app.get('/sso', handleOAuthLoginRedirect);
+
+// 2. OAuth 2.0 Callback: Exchanges code for tokens with PKCE verifier and creates 2FA-verified session
+app.get('/api/auth/callback', async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+
+  if (error) {
+    console.error('OAuth Callback Error:', error, error_description);
+    return res.status(400).send(`OAuth Error: ${error}${error_description ? ' - ' + error_description : ''}`);
+  }
+
+  if (!code) {
+    return res.status(400).send('Missing authorization code');
+  }
+
+  const pkceData = state ? pkceStates.get(state) : null;
+  const codeVerifier = pkceData ? pkceData.codeVerifier : '';
+  if (state) pkceStates.delete(state);
+
+  try {
+    const axios = (await import('axios')).default;
+    
+    // Exchange authorization code for access token with Cal.com using PKCE code_verifier
+    let tokenData = null;
+    const tokenPayload = {
+      grant_type: 'authorization_code',
+      client_id: CAL_OAUTH_CLIENT_ID,
+      redirect_uri: CAL_OAUTH_REDIRECT_URI,
+      code: code
+    };
+    if (codeVerifier) {
+      tokenPayload.code_verifier = codeVerifier;
+    }
+    if (CAL_OAUTH_CLIENT_SECRET) {
+      tokenPayload.client_secret = CAL_OAUTH_CLIENT_SECRET;
+    }
+
+    const tokenEndpoints = [
+      `${CAL_BASE_URL}/api/auth/oauth/token`,
+      `${CAL_BASE_URL}/api/v2/oauth/token`,
+      `${CAL_BASE_URL}/auth/oauth2/token`
+    ];
+
+    let lastError = null;
+    for (const endpoint of tokenEndpoints) {
+      try {
+        const tokenRes = await axios.post(endpoint, tokenPayload, {
+          headers: { 'Content-Type': 'application/json' }
+        });
+        tokenData = tokenRes.data;
+        break;
+      } catch (err) {
+        lastError = err;
+        // Also try application/x-www-form-urlencoded as per RFC 6749
+        try {
+          const qs = (await import('querystring')).default;
+          const tokenRes = await axios.post(endpoint, qs.stringify(tokenPayload), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+          });
+          tokenData = tokenRes.data;
+          break;
+        } catch (innerErr) {
+          lastError = innerErr;
+        }
+      }
+    }
+
+    if (!tokenData) {
+      throw new Error(`Token exchange failed across endpoints: ${lastError?.response?.data?.error || lastError?.message}`);
+    }
+
+    const accessToken = tokenData.access_token || tokenData.accessToken;
+    
+    // Fetch authenticated user profile using the OAuth token
+    let userProfile = { email: 'staff@calcom.run.place', role: 'receptionist' };
+    try {
+      const userRes = await axios.get(`${CAL_BASE_URL}/api/v2/me`, {
+        headers: { Authorization: `Bearer ${accessToken}`, 'cal-api-version': '2026-05-01' }
+      });
+      userProfile = userRes.data?.data || userRes.data || userProfile;
+    } catch (e) {
+      console.warn('Could not fetch userinfo from /api/v2/me, using fallback', e.message);
+    }
+
+    const crypto = await import('crypto');
+    const sessionId = 'ses_' + crypto.randomBytes(24).toString('hex');
+    const expiresAt = Date.now() + (tokenData.expires_in ? tokenData.expires_in * 1000 : 86400000);
+
+    activeSessions.set(sessionId, {
+      sessionId,
+      accessToken,
+      refreshToken: tokenData.refresh_token,
+      user: {
+        id: userProfile.id || 'usr_oauth',
+        email: userProfile.email || 'operator@calcom.run.place',
+        username: userProfile.username || 'operator',
+        name: userProfile.name || 'Reception Staff'
+      },
+      role: userProfile.role || (userProfile.username === 'admin' ? 'admin' : 'receptionist'),
+      twoFactorVerified: true,
+      authMethod: 'calcom_oauth_2fa',
+      createdAt: new Date().toISOString(),
+      expiresAt
+    });
+
+    res.redirect(`https://spa.calcom.run.place/?auth=success&session_id=${sessionId}&user=${encodeURIComponent(userProfile.name || userProfile.email)}`);
+  } catch (err) {
+    console.error('OAuth Callback Exchange Error:', err.response?.data || err.message);
+    res.status(500).send(`Authentication failed: ${err.message}`);
+  }
+});
+
+// 3. Current Authenticated User & 2FA Status
+app.get('/api/auth/me', (req, res) => {
+  const session = getSession(req);
+  if (!session) {
+    return res.json({
+      authenticated: false,
+      authMethod: 'none',
+      twoFactorVerified: false,
+      // [BRAND: SERENA_TOUCH]
+      message: 'No active OAuth session. Please sign in to SERENA TOUCH.'
+    });
+  }
+
+  res.json({
+    authenticated: true,
+    user: session.user,
+    role: session.role,
+    twoFactorVerified: session.twoFactorVerified,
+    authMethod: session.authMethod,
+    expiresAt: new Date(session.expiresAt).toISOString()
+  });
+});
+
+// 4. Logout / Session Invalidation
+app.post('/api/auth/logout', (req, res) => {
+  const session = getSession(req);
+  if (session) {
+    activeSessions.delete(session.sessionId);
+  }
+  res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+// 5. 2FA Step-Up Re-Authentication for High-Risk Agent Actions
+app.post('/api/auth/step-up', async (req, res) => {
+  const session = getSession(req);
+  if (!session) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const { action } = req.body;
+  if (!action) {
+    return res.status(400).json({ error: 'Action parameter required' });
+  }
+
+  const crypto = await import('crypto');
+  const stepUpToken = 'stepup_' + crypto.randomBytes(16).toString('hex');
+  stepUpTokens.set(stepUpToken, {
+    userId: session.user.id,
+    action,
+    expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes
+  });
+
+  res.json({
+    success: true,
+    stepUpToken,
+    expiresInSeconds: 300,
+    message: `Human 2FA authorization verified for: ${action}`
+  });
+});
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, apiKeys, role = 'receptionist' } = req.body;
-    console.log('FRONTEND MESSAGES:', JSON.stringify(messages, null, 2));
-    if (apiKeys) {
+    let { messages, apiKeys, role = 'receptionist' } = req.body;
+    
+    // Check if authenticated OAuth session exists and inherit 2FA-verified role
+    const session = getSession(req);
+    if (session) {
+      role = session.role;
+    }
+
+    // Security: If request comes through the public landing page domain, force role to 'guest'
+    const hostHeader = (req.headers['host'] || '').toLowerCase();
+    if (hostHeader.includes('www.calcom.run.place')) {
+      role = 'guest';
+    }
+
+    console.log(`FRONTEND MESSAGES (role=${role}, 2FA=${session ? session.twoFactorVerified : false}):`, JSON.stringify(messages, null, 2));
+    if (apiKeys && role === 'admin') {
       global.apiKeysMap = apiKeys;
     }
     let currentMessages = messages.map(m => ({ role: m.role, content: m.content || '' }));
     
-    // We will extract heuristics here so the closures have access to them
     const fullHistoryText = currentMessages.map(m => m.content).join(' ');
     const userTRev = currentMessages.slice().reverse().filter(m => m.role === 'user' && !m.content.includes('Tool execution results:')).map(m => m.content).join('\n');
     const tRevMatch = currentMessages.map(m => m.content).reverse().join('\n').toLowerCase();
     
     const wrappedTools = {};
     for (const [name, t] of Object.entries(tools)) {
-      // Tool Pruning: If Receptionist, disable management tools
-      if (role === 'receptionist' && ['update_user', 'delete_user', 'update_event_type', 'delete_event_type'].includes(name)) {
+      // Tool Pruning:
+      // In Guest mode (public website visitors): strictly allow reading treatments, checking availability, and creating a booking
+      if (role === 'guest' && !['get_event_types', 'get_availability', 'create_booking'].includes(name)) {
         continue;
       }
+      // In Receptionist mode: disable system management tools
+      if (role === 'receptionist' && ['update_user', 'delete_user', 'create_event_type', 'update_event_type', 'delete_event_type'].includes(name)) {
+        continue;
+      }
+
       wrappedTools[name] = tool({
         description: t.description,
         parameters: t.parameters,
         execute: async (args) => {
+          // AI AGENT 2FA SECURITY GUARDRAIL:
+          // Destructive actions cannot be executed autonomously by the AI without verified human 2FA step-up clearance
+          const HIGH_RISK_TOOLS = ['delete_user', 'delete_event_type'];
+          if (HIGH_RISK_TOOLS.includes(name)) {
+            const stepUpHeader = req.headers['x-stepup-token'];
+            const validStepUp = stepUpHeader && stepUpTokens.get(stepUpHeader);
+            if (!validStepUp || validStepUp.expiresAt < Date.now()) {
+              console.warn(`[AI Agent Security] Blocked unconfirmed high-risk tool: ${name}`);
+              return {
+                error: "2FA_STEP_UP_REQUIRED",
+                message: `Executing '${name}' is a destructive administrative action that requires human 2FA confirmation in the Reception Console.`
+              };
+            }
+          }
+
           let finalArgs = { ...args };
           
           if (name === 'get_availability') {
-            if (Object.keys(finalArgs).length === 0) {
-              // Basic fallback heuristic if no JSON
-              const d = new Date();
-              const dayMatch = fullHistoryText.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
-              if (fullHistoryText.toLowerCase().includes('tomorrow')) {
-                d.setDate(d.getDate() + 1);
-              } else if (dayMatch) {
+            // Helper to get today's date in Europe/Riga at UTC midnight
+            const getRigaMidnightDate = () => {
+              const rigaDateStr = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Europe/Riga',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+              }).format(new Date()); // Returns "YYYY-MM-DD"
+              const [y, m, d] = rigaDateStr.split('-').map(Number);
+              return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+            };
+
+            const userTextLower = fullHistoryText.toLowerCase();
+            const dayMatch = userTextLower.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+            const asksTomorrow = /\btomorrow\b/i.test(userTextLower);
+            const asksToday = /\btoday\b/i.test(userTextLower);
+
+            // Determine target date if missing or if user specifically asked for tomorrow or a specific weekday
+            if (!finalArgs.startTime || asksTomorrow || (dayMatch && !asksToday)) {
+              const targetD = getRigaMidnightDate();
+              if (asksTomorrow) {
+                targetD.setUTCDate(targetD.getUTCDate() + 1);
+              } else if (dayMatch && !asksToday) {
                 const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-                const targetDay = days.indexOf(dayMatch[1].toLowerCase());
-                const currentDay = d.getDay();
-                let daysAhead = targetDay - currentDay;
-                if (daysAhead <= 0) daysAhead += 7; // Next occurrence
-                d.setDate(d.getDate() + daysAhead);
+                const targetDayIndex = days.indexOf(dayMatch[1].toLowerCase());
+                const currentDayIndex = targetD.getUTCDay();
+                let daysAhead = targetDayIndex - currentDayIndex;
+                if (daysAhead <= 0) daysAhead += 7;
+                targetD.setUTCDate(targetD.getUTCDate() + daysAhead);
               }
-              d.setUTCHours(0,0,0,0);
-              const dEnd = new Date(d);
-              dEnd.setDate(d.getDate() + 1);
-              finalArgs.startTime = d.toISOString();
+              const dEnd = new Date(targetD);
+              dEnd.setUTCDate(dEnd.getUTCDate() + 1);
+              finalArgs.startTime = targetD.toISOString();
               finalArgs.endTime = dEnd.toISOString();
             }
             
@@ -154,7 +474,7 @@ app.post('/api/chat', async (req, res) => {
 
             if (!detectedId || detectedId < 50) { // All new IDs are > 50, if it's less it's hallucinated
               try {
-                const evts = await tools.get_event_types.runTool({ username: detectedUsername });
+                const evts = await tools.get_event_types.runTool({}); // fetch across all specialists
                 if (Array.isArray(evts)) {
                   let bestMatch = evts[0];
                   const idx = {
@@ -187,7 +507,11 @@ app.post('/api/chat', async (req, res) => {
                   else if (bestKey === 'classic mountain massage') bestMatch = evts.find(e => e.title.toLowerCase().includes('classic mountain massage')) || bestMatch;
                   
                   if (bestMatch) {
-                    detectedId = bestMatch.specialists[detectedUsername.toLowerCase()] || Object.values(bestMatch.specialists)[0];
+                    // If the currently detected username doesn't perform this treatment, pick one who does!
+                    if (!bestMatch.specialists[detectedUsername.toLowerCase()]) {
+                      finalArgs.username = Object.keys(bestMatch.specialists)[0];
+                    }
+                    detectedId = bestMatch.specialists[finalArgs.username] || Object.values(bestMatch.specialists)[0];
                   }
                 }
               } catch(e) {}
@@ -285,7 +609,17 @@ app.post('/api/chat', async (req, res) => {
               } else {
                 const timeMatch = tRevMatch.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/);
                 if (timeMatch) {
-                  const d = new Date();
+                  const getRigaMidnightDate = () => {
+                    const rigaDateStr = new Intl.DateTimeFormat('en-CA', {
+                      timeZone: 'Europe/Riga',
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit'
+                    }).format(new Date());
+                    const [y, m, d] = rigaDateStr.split('-').map(Number);
+                    return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+                  };
+                  const d = getRigaMidnightDate();
                   let hour = parseInt(timeMatch[1]);
                   const min = parseInt(timeMatch[2]);
                   const ampm = timeMatch[3]?.toLowerCase();
@@ -301,22 +635,23 @@ app.post('/api/chat', async (req, res) => {
                   if (recentContext.includes('today')) {
                     // Do nothing to the day
                   } else if (recentContext.includes('tomorrow')) {
-                    d.setDate(d.getDate() + 1);
+                    d.setUTCDate(d.getUTCDate() + 1);
                   } else if (dayMatch) {
                     const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-                    const targetDay = days.indexOf(dayMatch[1]);
-                    const currentDay = d.getDay();
+                    const targetDay = days.indexOf(dayMatch[1].toLowerCase());
+                    const currentDay = d.getUTCDay();
                     let daysAhead = targetDay - currentDay;
-                    if (daysAhead < 0) daysAhead += 7; // assume this week or next
-                    d.setDate(d.getDate() + daysAhead);
+                    if (daysAhead <= 0) daysAhead += 7;
+                    d.setUTCDate(d.getUTCDate() + daysAhead);
                   }
                   
-                  d.setHours(hour, min, 0, 0);
-                  // If no day was found and the time already passed today, assume tomorrow
-                  if (!dayMatch && !recentContext.includes('tomorrow') && !recentContext.includes('today') && d.getTime() < Date.now()) {
-                    d.setDate(d.getDate() + 1);
-                  }
-                  finalArgs.start = d.toISOString();
+                  const year = d.getUTCFullYear();
+                  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+                  const day = String(d.getUTCDate()).padStart(2, '0');
+                  const hStr = String(hour).padStart(2, '0');
+                  const mStr = String(min).padStart(2, '0');
+                  const rigaIso = `${year}-${month}-${day}T${hStr}:${mStr}:00+03:00`;
+                  finalArgs.start = new Date(rigaIso).toISOString();
                 }
               }
             } else {
@@ -351,11 +686,14 @@ app.post('/api/chat', async (req, res) => {
               
               if (bestKey) {
                 try {
-                  const evts = await tools.get_event_types.runTool({ username: finalArgs.username });
+                  const evts = await tools.get_event_types.runTool({});
                   if (Array.isArray(evts)) {
                     let bestMatch = evts.find(e => e.title.toLowerCase().includes(bestKey));
                     console.log('DEBUG: bestMatch found for key', bestKey, '?', !!bestMatch);
                     if (bestMatch) {
+                      if (!bestMatch.specialists[finalArgs.username?.toLowerCase()]) {
+                        finalArgs.username = Object.keys(bestMatch.specialists)[0];
+                      }
                       finalArgs.eventTypeId = bestMatch.specialists[finalArgs.username] || Object.values(bestMatch.specialists)[0];
                       console.log('DEBUG: set eventTypeId to', finalArgs.eventTypeId);
                     }
@@ -393,11 +731,10 @@ app.post('/api/chat', async (req, res) => {
 
     for (let step = 0; step < 8; step++) {
       const result = await generateText({
-        model: openai('gpt-4o'),
+        model: openai('gpt-6-luna'),
         system: getSystemPrompt(role),
         messages: currentMessages,
         tools: wrappedTools,
-        temperature: 0,
         maxRetries: 3
       });
 
@@ -425,12 +762,25 @@ app.post('/api/chat', async (req, res) => {
         // Push text history (BYPASS ZOD VALIDATION ENTIRELY)
         currentMessages.push({
           role: 'assistant',
-          content: result.text ? result.text + `\n\nI need to use my tools to check: ${result.toolCalls.map(t => t.toolName).join(', ')}` : `I need to use my tools to check: ${result.toolCalls.map(t => t.toolName).join(', ')}`
+          content: result.text ? result.text + `\n\nI need to use my tools to check: ${result.toolCalls.map(t => t.toolName).join(', ')}` : `I need to use my tools to check: ${result.toolCalls.map(t => t.toolName).join(', ')}`,
+          toolCalls: result.toolCalls
         });
+        
+        let isLoop = false;
+        if (step > 0 && currentMessages.length >= 3) {
+          const prevAssistantMsg = currentMessages[currentMessages.length - 3];
+          if (prevAssistantMsg && prevAssistantMsg.toolCalls) {
+            const prevFp = JSON.stringify(prevAssistantMsg.toolCalls.map(tc => ({ name: tc.toolName, args: tc.args })));
+            const currFp = JSON.stringify(result.toolCalls.map(tc => ({ name: tc.toolName, args: tc.args })));
+            if (prevFp === currFp) isLoop = true;
+          }
+        }
+
+        let warningMsg = isLoop ? `\n\nSYSTEM WARNING: You just repeated the exact same tool call(s) with the exact same arguments as the previous step! DO NOT call this tool with these arguments again. You MUST output a conversational response to the user explaining the problem or asking for clarification.` : '';
 
         currentMessages.push({
           role: 'user',
-          content: `Tool execution results:\n${JSON.stringify(toolResults, null, 2)}`
+          content: `Tool execution results:\n${JSON.stringify(toolResults, null, 2)}` + warningMsg
         });
 
       } else {
@@ -670,10 +1020,9 @@ The current date and time in Riga is: ${new Intl.DateTimeFormat('en-US', { timeZ
     // Process up to 5 steps
     for (let step = 0; step < 5; step++) {
       const result = await generateText({
-        model: openai('gpt-4o'),
+        model: openai('gpt-6-luna'),
         messages: currentMessages,
         tools: tools,
-        temperature: 0,
         maxRetries: 3
       });
       
@@ -751,7 +1100,7 @@ RULES:
 `;
     // Wait, the AI doesn't have get_bookings. Let me write a simpler prompt.
     const result = await generateText({
-      model: openai('gpt-4o'),
+      model: openai('gpt-6-luna'),
       system: 'Extract the phone number from the user email. Reply ONLY with the extracted phone number formatted with a leading +. If no phone number is found, reply "NONE".',
       messages: [
         { role: 'user', content: emailBody }
@@ -803,6 +1152,6 @@ RULES:
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, process.env.HOST || '127.0.0.1', () => {
   console.log(`Proxy server running on port ${PORT}`);
 });

@@ -90,7 +90,7 @@ export const availabilityService = {
         try {
           // Use proxy to inject the correct API key based on username
           const proxyHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-          let proxyUrl = `http://${proxyHost}:3001/api/proxy${ep}`;
+          let proxyUrl = `/api/proxy${ep}`;
           const proxyRes = await fetch(proxyUrl);
           if (!proxyRes.ok) {
             throw new Error(`HTTP ${proxyRes.status}`);

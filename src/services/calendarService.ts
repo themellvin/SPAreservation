@@ -284,7 +284,7 @@ export const calendarService = {
         if (typeof window !== 'undefined') {
           const { getApiConfig } = await import('../api/calClient');
           const { apiKey, apiEndpoint } = getApiConfig(username);
-          const proxyUrl = `http://${window.location.hostname}:3001/api/proxy/event-types?username=${encodeURIComponent(username.trim())}`;
+          const proxyUrl = `/api/proxy/event-types?username=${encodeURIComponent(username.trim())}`;
           const proxyRes = await fetch(proxyUrl, {
             headers: { 'X-Proxy-Api-Key': apiKey, 'X-Proxy-Api-Url': apiEndpoint }
           });

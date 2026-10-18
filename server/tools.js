@@ -257,6 +257,15 @@ export const tools = {
             language: 'en',
             phoneNumber: finalPhone
           },
+          attendees: [
+            {
+              name: name,
+              email: email,
+              timeZone: 'Europe/Riga',
+              language: 'en',
+              phoneNumber: finalPhone
+            }
+          ],
           responses: {
             name: name,
             email: email,
@@ -276,23 +285,40 @@ export const tools = {
 
         let response;
         try {
-          response = await axios.post(`${CAL_API_URL}/bookings`, payload, {
-            headers: {
-              'Authorization': `Bearer ${resolvedKey}`,
-              'cal-api-version': '2024-06-14'
+          const attemptRequest = async (currentPayload) => {
+            let res;
+            let retry = false;
+            try {
+              res = await axios.post(`${CAL_API_URL}/bookings`, currentPayload, {
+                headers: {
+                  'Authorization': `Bearer ${resolvedKey}`,
+                  'cal-api-version': '2024-06-14'
+                }
+              });
+            } catch (error) {
+              const errMsg = error.response?.data?.error?.message || error.response?.data?.message || '';
+              if (errMsg.includes('responses should not exist') || errMsg.includes('responses property is wrong')) {
+                delete currentPayload.responses;
+                retry = true;
+              } else if (errMsg.includes('lengthInMinutes') && errMsg.includes('not one of the possible lengths')) {
+                delete currentPayload.lengthInMinutes;
+                retry = true;
+              } else if (errMsg.includes('no_available_users_found_error')) {
+                throw error;
+              } else {
+                throw error;
+              }
             }
-          });
+            if (retry) {
+              return attemptRequest(currentPayload);
+            }
+            return res;
+          };
+          
+          response = await attemptRequest(payload);
         } catch (error) {
           const errMsg = error.response?.data?.error?.message || error.response?.data?.message || '';
-          if (errMsg.includes('responses should not exist') || errMsg.includes('responses property is wrong')) {
-            delete payload.responses;
-            response = await axios.post(`${CAL_API_URL}/bookings`, payload, {
-              headers: {
-                'Authorization': `Bearer ${resolvedKey}`,
-                'cal-api-version': '2024-06-14'
-              }
-            });
-          } else if (errMsg.includes('no_available_users_found_error')) {
+          if (errMsg.includes('no_available_users_found_error')) {
             // WORKAROUND FOR CAL.COM BUG: API sometimes throws 500 error but creates the booking anyway!
             try {
               const checkRes = await axios.get(`${CAL_API_URL}/bookings`, {

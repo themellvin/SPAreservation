@@ -4,21 +4,21 @@
   --color-inverse-on-surface: #f5f0ed;
   --color-surface-container: #f2edea;
   --color-on-error: #ffffff;
-  --color-on-primary-fixed-variant: #004f50;
-  --color-background: #fdf8f5;
-  --color-primary-container: #3a7f7f;
+  --color-on-primary-fixed-variant: #0e1c16;
+  --color-background: #fbf9f5;
+  --color-primary-container: #213a31;
   --color-tertiary-fixed: #cae8e9;
   --color-on-tertiary-container: #f2ffff;
   --color-tertiary-fixed-dim: #aecccd;
-  --color-sand-light: #F2EBE3;
+  --color-sand-light: #F7F4EE;
   --color-secondary-container: #f4dfcb;
-  --color-surface: #fdf8f5;
+  --color-surface: #fbf9f5;
   --color-on-secondary-fixed-variant: #524436;
-  --color-surface-bright: #fdf8f5;
+  --color-surface-bright: #fbf9f5;
   --color-inverse-primary: #8ed2d2;
   --color-error: #ba1a1a;
   --color-on-secondary-fixed: #241a0e;
-  --color-on-surface-variant: #3f4948;
+  --color-on-surface-variant: #4a5550;
   --color-tertiary: #456162;
   --color-on-secondary: #ffffff;
   --color-surface-container-lowest: #ffffff;
@@ -29,30 +29,41 @@
   --color-secondary: #6b5c4c;
   --color-outline: #6f7979;
   --color-primary-fixed-dim: #8ed2d2;
-  --color-primary: #1b6666;
-  --color-surface-variant: #e6e2df;
+  
+  /* Serene Touch Luxury Palette */
+  --color-primary: #14271f;
+  --color-primary-forest: #213a31;
+  --color-primary-deep: #0f1c16;
+  --color-gold: #d8b875;
+  --color-gold-hover: #b6904d;
+  --color-gold-dark: #7a5b28;
+  --color-cream: #f7f4ee;
+
+  --color-surface-variant: #e8e5df;
   --color-surface-dim: #ded9d6;
   --color-on-primary-container: #f3fffe;
   --color-on-tertiary-fixed-variant: #304b4c;
-  --color-surface-tint: #1f6869;
-  --color-on-background: #1c1b1a;
+  --color-surface-tint: #14271f;
+  --color-on-background: #1d2924;
   --color-on-error-container: #93000a;
   --color-primary-fixed: #aaefee;
-  --color-surface-container-low: #f8f3f0;
+  --color-surface-container-low: #f8f5ef;
   --color-on-secondary-container: #716252;
   --color-surface-container-highest: #e6e2df;
   --color-on-primary: #ffffff;
-  --color-accent-coral: #FC5E58;
+  --color-accent-coral: #d8b875;
   --color-on-tertiary: #ffffff;
   --color-outline-variant: #bec8c8;
   --color-secondary-fixed-dim: #d7c3b0;
   --color-tertiary-container: #5e7a7b;
   --color-error-container: #ffdad6;
-  --color-on-surface: #1c1b1a;
+  --color-on-surface: #1d2924;
   --color-on-primary-fixed: #002020;
   --color-inverse-surface: #32302e;
-  --color-surface-muted: #F7F5F3;
-  --color-strawberry-red: #fc5e58;
+  --color-surface-muted: #F7F5F0;
+  --color-strawberry-red: #d8b875;
+
+  --font-serif: "Playfair Display", Georgia, serif;
 
   --radius-DEFAULT: 0.25rem;
   --radius-lg: 0.5rem;
@@ -90,3 +101,90 @@ body {
   transform: translateY(-2px) !important;
   box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.55) !important;
 }
+
+/* [BRAND: SERENA_TOUCH] Luxury Spa Booking Window & Main Window with Landing Page Picture Background */
+.spa-picture-modal {
+  background-image: linear-gradient(135deg, rgba(20, 39, 31, 0.78) 0%, rgba(15, 28, 22, 0.85) 100%), url('/spa-bg.jpg') !important;
+  background-size: cover !important;
+  background-position: center !important;
+  backdrop-filter: blur(18px) !important;
+  border: 1px solid rgba(216, 184, 117, 0.4) !important;
+  box-shadow: 0 25px 60px -10px rgba(0, 0, 0, 0.65), 0 0 35px rgba(216, 184, 117, 0.15) !important;
+  color: #f7f4ee !important;
+}
+
+.spa-view-picture-bg {
+  background-image: linear-gradient(145deg, rgba(251, 249, 245, 0.88) 0%, rgba(247, 244, 238, 0.92) 100%), url('/spa-bg.jpg');
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+.spa-picture-modal .modal-header {
+  background: rgba(15, 28, 22, 0.65) !important;
+  backdrop-filter: blur(12px) !important;
+  border-bottom: 1px solid rgba(216, 184, 117, 0.35) !important;
+}
+
+.spa-picture-modal .modal-content-area {
+  background: transparent !important;
+  color: #f7f4ee !important;
+}
+
+.spa-picture-modal input, 
+.spa-picture-modal select, 
+.spa-picture-modal textarea {
+  background: rgba(15, 28, 22, 0.55) !important;
+  border: 1px solid rgba(216, 184, 117, 0.4) !important;
+  color: #f7f4ee !important;
+  backdrop-filter: blur(8px);
+}
+
+.spa-picture-modal select option {
+  background-color: #14271f !important;
+  color: #f7f4ee !important;
+}
+
+.spa-picture-modal input:focus, 
+.spa-picture-modal select:focus, 
+.spa-picture-modal textarea:focus {
+  border-color: #d8b875 !important;
+  box-shadow: 0 0 0 2px rgba(216, 184, 117, 0.25) !important;
+  background: rgba(15, 28, 22, 0.72) !important;
+}
+
+.spa-picture-modal input::placeholder, 
+.spa-picture-modal textarea::placeholder {
+  color: rgba(247, 244, 238, 0.55) !important;
+}
+
+.spa-picture-modal label {
+  color: #d8b875 !important;
+}
+
+.spa-btn-gold {
+  background: linear-gradient(135deg, #d8b875 0%, #c9a863 100%) !important;
+  color: #14271f !important;
+  font-weight: 700 !important;
+  border: 1px solid rgba(216, 184, 117, 0.5) !important;
+  transition: all 0.2s ease !important;
+}
+
+.spa-btn-gold:hover {
+  filter: brightness(1.08) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 6px 20px rgba(216, 184, 117, 0.35) !important;
+}
+
+.spa-btn-secondary {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #f7f4ee !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  transition: all 0.2s ease !important;
+}
+
+.spa-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+}
+

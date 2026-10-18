@@ -22,7 +22,7 @@ export const bookingService = {
     let allRawBookings: any[] = [];
     
     const proxyHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-    const proxyUrl = `http://${proxyHost}:3001/api/proxy/bookings`;
+    const proxyUrl = `/api/proxy/bookings`;
     const statuses = ['upcoming', 'unconfirmed', 'recurring', 'past', 'cancelled'];
     let promises: Promise<any>[] = [];
 
@@ -143,7 +143,7 @@ export const bookingService = {
     try {
       const { apiKey, bookingsEndpoint } = (await import('../api/calClient')).getApiConfig(bookingData.username);
       const proxyHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-      let proxyUrl = `http://${proxyHost}:3001/api/proxy/bookings`;
+      let proxyUrl = `/api/proxy/bookings`;
       if (bookingData.username) {
         proxyUrl += `?username=${encodeURIComponent(bookingData.username)}`;
       }
@@ -181,7 +181,7 @@ export const bookingService = {
               delete payload.responses;
               retry = true;
             }
-            if (msg.includes('lengthInMinutes') && (msg.includes('multiple possible lengths') || msg.includes("remove the 'lengthInMinutes' field"))) {
+            if (msg.includes('lengthInMinutes') && (msg.includes('multiple possible lengths') || msg.includes("remove the 'lengthInMinutes' field") || msg.includes("is not one of the possible lengths"))) {
               console.warn('Cal.com rejected lengthInMinutes, retrying without it...');
               delete payload.lengthInMinutes;
               retry = true;
@@ -236,7 +236,7 @@ export const bookingService = {
     }
     const { apiKey, bookingsEndpoint } = (await import('../api/calClient')).getApiConfig(username);
     const proxyHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-    let proxyUrl = `http://${proxyHost}:3001/api/proxy/bookings/${bookingUid}/cancel`;
+    let proxyUrl = `/api/proxy/bookings/${bookingUid}/cancel`;
     if (username) proxyUrl += `?username=${encodeURIComponent(username)}`;
     const proxyRes = await fetch(proxyUrl, {
       method: 'POST',
@@ -251,7 +251,7 @@ export const bookingService = {
     return await proxyRes.json();
   },
 
-  rescheduleBooking: async (bookingUid: string, rescheduleData: { start: string; notes?: string }, username?: string): Promise<any> => {
+  rescheduleBooking: async (bookingUid: string, rescheduleData: { start: string; notes?: string; name?: string; email?: string }, username?: string): Promise<any> => {
     const isMock = bookingUid.startsWith('ra') || /^\d+$/.test(bookingUid);
     if (isMock) {
       console.log('Skipping API reschedule for offline mock booking:', bookingUid);
@@ -259,7 +259,7 @@ export const bookingService = {
     }
     const { apiKey, bookingsEndpoint } = (await import('../api/calClient')).getApiConfig(username);
     const proxyHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-    let proxyUrl = `http://${proxyHost}:3001/api/proxy/bookings/${bookingUid}/reschedule`;
+    let proxyUrl = `/api/proxy/bookings/${bookingUid}/reschedule`;
     if (username) proxyUrl += `?username=${encodeURIComponent(username)}`;
     const proxyRes = await fetch(proxyUrl, {
       method: 'POST',
@@ -269,7 +269,8 @@ export const bookingService = {
         'X-Proxy-Api-Url': bookingsEndpoint
       },
       body: JSON.stringify({ 
-        start: rescheduleData.start
+        start: rescheduleData.start,
+        responses: rescheduleData.name ? { name: rescheduleData.name, email: rescheduleData.email } : undefined
       })
     });
     if (!proxyRes.ok) {
